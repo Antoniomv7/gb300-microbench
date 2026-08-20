@@ -1,0 +1,80 @@
+{
+  "schema_version": "gb300-publication.v1",
+  "repository_name": "gb300-microbench",
+  "scientific_origin": {
+    "repository": "https://github.com/Antoniomv7/gb300-gemm-anatomy",
+    "frozen_commit": "86f2382fb92a957035c067ae725e9e25afacab6f",
+    "execution_commit": "b08e45c2636a3ac17c94ad8b1368084914196d7a",
+    "analysis_code_commit": "2ef1ac52907c407dd43c41661382fc8d5673cce4"
+  },
+  "hardware": {
+    "name": "NVIDIA B300 SXM6 AC",
+    "uuid": "GPU-40e00845-d89c-1393-2c32-a2dca3ee9442",
+    "compute_capability": "10.3",
+    "driver_version": "610.43.02"
+  },
+  "campaigns": {
+    "final": [
+      "20260817T110330Z",
+      "20260817T111310Z",
+      "20260817T112011Z"
+    ],
+    "excluded_pilot": "20260812T013848Z"
+  },
+  "acceptance": {
+    "status": "ACCEPTED",
+    "analysis_manifest_sha256": "b95d17910f8384187ddc94afacc9081507858de1fb69292f5f3d73bf4cc2d6ac",
+    "published_artifact_sha256": {
+      "results/memory_paths.csv": "2145cfb050a7282ff44b3e7b5c9faf27985289605fe417554133711d849b6a6d",
+      "results/umma_throughput.csv": "7efe85fc83ab440eac2ce6bc22297e498b0c149ec8ce9398dc119720f1883650",
+      "results/gemm_comparison.csv": "134ff308cf41b15dffc2fc78ff91864ff99d5e0248acc1f651ca205f6b962a0d",
+      "results/figures/memory_paths.svg": "2db567db9808c21d8feeb91e1dd24b96b8ee983e00c600559725aa0402ceed3d",
+      "results/figures/umma_throughput.svg": "a6b7f2c0384637ed27897aafc4f3b0c3b58579d3f9b9566371382371ddc98379",
+      "results/figures/gemm_comparison.svg": "64b62238359d0930b558702f1a288c35a91f29e755c000f012847960c594a999"
+    }
+  },
+  "original_source_identity": {
+    "memory_paths/ldgsts.cu": {
+      "git_blob": "89e9d792eb0d231a925b04c9acec0e765770c44e",
+      "original_sha256": "ff37015e31282a731748377e7305f8bae412ef7f0d5d43505e6573299c85ae52",
+      "publication_sha256": "3b2913aa97149d55f551e02db4bc1c401c6b73bbdc26882abac44fee3b0d417c",
+      "change": "Comments and message text only; executable code is unchanged. Verified by stripping comments from both versions: identical token streams, identical inline-PTX blocks."
+    },
+    "memory_paths/tma.cu": {
+      "git_blob": "18952024165713105aa8ca41c3fb5e0306563282",
+      "original_sha256": "21e1b647098730a0c5d2f0d0e19c2bd40945d082484bb3a6626cc13418d67423",
+      "publication_sha256": "0ab7de0df41868a6d69ca4a0692389296cf1188156b649ff47e5e32e05145429",
+      "change": "Comments and message text only; executable code is unchanged. Verified by stripping comments from both versions: identical token streams, identical inline-PTX blocks."
+    },
+    "umma_throughput/umma_1sm.cu": {
+      "git_blob": "99d232f4cb5df18c229d1fedd92fdaa7bab8155f",
+      "original_sha256": "40a9b4a150b3b07d142ba35a4ee2027db0efff116507a2935a14310475b3e52b",
+      "publication_sha256": "c579c886d10ccbbc6980c9940e9a93dd67cdf0490bf0b3791c6f536a67fe641f",
+      "change": "Comments and message text only; executable code is unchanged. Verified by stripping comments from both versions: identical token streams, identical inline-PTX blocks."
+    },
+    "umma_throughput/umma_2sm.cu": {
+      "git_blob": "f645ebaf6dd80c06a5770c814530ec2de76db95b",
+      "original_sha256": "8a9a75c6bb5627a6950c969ee57b44fb3befc2f2d91cc1c070e29b5a29a9497a",
+      "publication_sha256": "fd87f420f54bab3ce59e4d72f88333661dddb9923701e1ec07eaef59b27ee110",
+      "change": "Comments and message text only; executable code is unchanged. Verified by stripping comments from both versions: identical token streams, identical inline-PTX blocks."
+    },
+    "gemm_comparison/cublaslt_bridge.cu": {
+      "original_path": "src/gemm/cublaslt_bridge_p35.cu",
+      "git_blob": "356ed8de471ae97cc7b47fcd50c4b3e51a6e6835",
+      "sha256": "2587a71d7603fdc5d340624dfd3c343dc8dd89bf1ba790cf7655e4217fa4ecb5"
+    },
+    "gemm_comparison/gemm_comparison.py": {
+      "original_path": "src/gemm/gemm_comparison.py",
+      "git_blob": "82d5cfdd1361b373786fe87099de23d4bcb81074",
+      "original_sha256": "3e6f2d4fd05cd648402a5389f0ed6a728a64eea202cb4a5688ab2514d1599737",
+      "publication_sha256": "4f11bf4f440ff3a4530a0a33759fcf9094d7acb1b895892922b3fc416c412836",
+      "change": "Repository-root and renamed-bridge paths, plus comments, docstrings and message text. Measurement code is unchanged: identical token stream and identical string-masked AST against the frozen original."
+    }
+  },
+  "preserved_sass_sha256": {
+    "artifacts/sass/ldgsts.sass": "9980ad7cc06d2975237abffe7ecd0ab52dec500dcfbd37a6d5c8288c8855fc8b",
+    "artifacts/sass/tma.sass": "3d4a196640348f3c8875cdbf4f88414cdb209414d68a3cb00b8480c9f55bb086",
+    "artifacts/sass/umma_1sm.sass": "7d3a95f93381bf55e539b759491aa15ed9c9558855f4bf3549f4c2867e34eed7",
+    "artifacts/sass/umma_2sm.sass": "47c02bc38eb38c705619a71f12c818f1e8a07300e6e0e14988a8d54b03e1b1b7"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": "p43.acceptance.v1",
+  "unit": "P4.3",
+  "status": "ACCEPTED",
+  "accepted_for_publication": true,
+  "analysis_code_commit": "2ef1ac52907c407dd43c41661382fc8d5673cce4",
+  "final_campaign_ids": [
+    "20260817T110330Z",
+    "20260817T111310Z",
+    "20260817T112011Z"
+  ],
+  "pilot_campaign_id_excluded": "20260812T013848Z",
+  "analysis_manifest_sha256": "b95d17910f8384187ddc94afacc9081507858de1fb69292f5f3d73bf4cc2d6ac",
+  "artifact_sha256": {
+    "memory_paths.csv": "2145cfb050a7282ff44b3e7b5c9faf27985289605fe417554133711d849b6a6d",
+    "umma_throughput.csv": "7efe85fc83ab440eac2ce6bc22297e498b0c149ec8ce9398dc119720f1883650",
+    "gemm_comparison.csv": "134ff308cf41b15dffc2fc78ff91864ff99d5e0248acc1f651ca205f6b962a0d",
+    "integrated_summary.json": "0a336d5209e40de118499657cae00d1abf1cc9895731ad56d989f6aa3d8829b2",
+    "report.md": "e196fe0dc3a077cf76468dce22d115e97bc5fef59e63ffbcf114dceadd3f2afc",
+    "figures/memory_paths.svg": "2db567db9808c21d8feeb91e1dd24b96b8ee983e00c600559725aa0402ceed3d",
+    "figures/umma_throughput.svg": "a6b7f2c0384637ed27897aafc4f3b0c3b58579d3f9b9566371382371ddc98379",
+    "figures/gemm_comparison.svg": "64b62238359d0930b558702f1a288c35a91f29e755c000f012847960c594a999",
+    "analysis_manifest.json": "b95d17910f8384187ddc94afacc9081507858de1fb69292f5f3d73bf4cc2d6ac"
+  },
+  "verification_outcome": "byte_for_byte_recomputation_matched",
+  "independent_output_review_outcome": "independent_output_review_passed"
+}

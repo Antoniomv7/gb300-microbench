@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 480" width="1080" height="480" font-family="monospace" font-size="11">
+<title>Memory paths: timing-derived effective transfer rate</title>
+<metadata>schema_version=p43.v1; unit=P4.3; role=deterministic visual sibling; authoritative_bundle_envelope=analysis_manifest.json; not a standalone provenance envelope</metadata>
+<rect x="0" y="0" width="1080" height="480" fill="#ffffff" stroke="none"/>
+<text x="24" y="25" font-size="16" font-weight="bold" fill="#1f2937">Memory paths: timing-derived effective transfer rate</text>
+<text x="24" y="44" font-size="10" fill="#4b5563">Focused y-scale; dot = cross-campaign mean; whisker = min-max; n=3 final campaigns; x = bytes in flight</text>
+<text x="211.2" y="70.0" text-anchor="middle" font-weight="bold">stages=2</text>
+<rect x="73.1" y="82.0" width="276.2" height="290.0" fill="none" stroke="#333333" stroke-width="1"/>
+<line x1="73.1" y1="372.0" x2="349.3" y2="372.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="68.1" y="375.0" text-anchor="end">735.3</text>
+<line x1="73.1" y1="299.5" x2="349.3" y2="299.5" stroke="#e0e0e0" stroke-width="1"/>
+<text x="68.1" y="302.5" text-anchor="end">2424</text>
+<line x1="73.1" y1="227.0" x2="349.3" y2="227.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="68.1" y="230.0" text-anchor="end">4113</text>
+<line x1="73.1" y1="154.5" x2="349.3" y2="154.5" stroke="#e0e0e0" stroke-width="1"/>
+<text x="68.1" y="157.5" text-anchor="end">5801</text>
+<line x1="73.1" y1="82.0" x2="349.3" y2="82.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="68.1" y="85.0" text-anchor="end">7490</text>
+<text x="25.8" y="227.0" text-anchor="middle" transform="rotate(-90 25.8 227.0)">GB/s</text>
+<text x="119.1" y="388.0" text-anchor="middle">16 KiB</text>
+<text x="211.2" y="388.0" text-anchor="middle">32 KiB</text>
+<text x="303.3" y="388.0" text-anchor="middle">64 KiB</text>
+<line x1="119.1" y1="269.3" x2="119.1" y2="269.3" stroke="#1f4e79" stroke-width="1.5"/>
+<line x1="211.2" y1="181.8" x2="211.2" y2="181.6" stroke="#1f4e79" stroke-width="1.5"/>
+<line x1="303.3" y1="105.4" x2="303.3" y2="105.1" stroke="#1f4e79" stroke-width="1.5"/>
+<polyline points="119.1,269.3 211.2,181.7 303.3,105.2" fill="none" stroke="#1f4e79" stroke-width="2"/>
+<circle cx="119.1" cy="269.3" r="4" fill="#1f4e79" stroke="#ffffff" stroke-width="1"/>
+<circle cx="211.2" cy="181.7" r="4" fill="#1f4e79" stroke="#ffffff" stroke-width="1"/>
+<circle cx="303.3" cy="105.2" r="4" fill="#1f4e79" stroke="#ffffff" stroke-width="1"/>
+<rect x="79.1" y="88.0" width="10" height="10" fill="#1f4e79"/>
+<text x="93.1" y="97.0">ldgsts</text>
+<line x1="119.1" y1="273.2" x2="119.1" y2="273.1" stroke="#c05621" stroke-width="1.5"/>
+<line x1="211.2" y1="186.7" x2="211.2" y2="186.5" stroke="#c05621" stroke-width="1.5"/>
+<line x1="303.3" y1="105.0" x2="303.3" y2="104.8" stroke="#c05621" stroke-width="1.5"/>
+<polyline points="119.1,273.1 211.2,186.6 303.3,104.9" fill="none" stroke="#c05621" stroke-width="2"/>
+<circle cx="119.1" cy="273.1" r="4" fill="#c05621" stroke="#ffffff" stroke-width="1"/>
+<circle cx="211.2" cy="186.6" r="4" fill="#c05621" stroke="#ffffff" stroke-width="1"/>
+<circle cx="303.3" cy="104.9" r="4" fill="#c05621" stroke="#ffffff" stroke-width="1"/>
+<rect x="79.1" y="102.0" width="10" height="10" fill="#c05621"/>
+<text x="93.1" y="111.0">tma</text>
+<text x="560.5" y="70.0" text-anchor="middle" font-weight="bold">stages=4</text>
+<rect x="422.4" y="82.0" width="276.2" height="290.0" fill="none" stroke="#333333" stroke-width="1"/>
+<line x1="422.4" y1="372.0" x2="698.7" y2="372.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="417.4" y="375.0" text-anchor="end">735.3</text>
+<line x1="422.4" y1="299.5" x2="698.7" y2="299.5" stroke="#e0e0e0" stroke-width="1"/>
+<text x="417.4" y="302.5" text-anchor="end">2424</text>
+<line x1="422.4" y1="227.0" x2="698.7" y2="227.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="417.4" y="230.0" text-anchor="end">4113</text>
+<line x1="422.4" y1="154.5" x2="698.7" y2="154.5" stroke="#e0e0e0" stroke-width="1"/>
+<text x="417.4" y="157.5" text-anchor="end">5801</text>
+<line x1="422.4" y1="82.0" x2="698.7" y2="82.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="417.4" y="85.0" text-anchor="end">7490</text>
+<text x="375.1" y="227.0" text-anchor="middle" transform="rotate(-90 375.1 227.0)">GB/s</text>
+<text x="468.5" y="388.0" text-anchor="middle">16 KiB</text>
+<text x="560.5" y="388.0" text-anchor="middle">32 KiB</text>
+<text x="652.6" y="388.0" text-anchor="middle">64 KiB</text>
+<line x1="468.5" y1="264.8" x2="468.5" y2="264.7" stroke="#1f4e79" stroke-width="1.5"/>
+<line x1="560.5" y1="183.4" x2="560.5" y2="183.2" stroke="#1f4e79" stroke-width="1.5"/>
+<line x1="652.6" y1="102.1" x2="652.6" y2="102.0" stroke="#1f4e79" stroke-width="1.5"/>
+<polyline points="468.5,264.7 560.5,183.3 652.6,102.0" fill="none" stroke="#1f4e79" stroke-width="2"/>
+<circle cx="468.5" cy="264.7" r="4" fill="#1f4e79" stroke="#ffffff" stroke-width="1"/>
+<circle cx="560.5" cy="183.3" r="4" fill="#1f4e79" stroke="#ffffff" stroke-width="1"/>
+<circle cx="652.6" cy="102.0" r="4" fill="#1f4e79" stroke="#ffffff" stroke-width="1"/>
+<rect x="428.4" y="88.0" width="10" height="10" fill="#1f4e79"/>
+<text x="442.4" y="97.0">ldgsts</text>
+<line x1="468.5" y1="300.9" x2="468.5" y2="300.7" stroke="#c05621" stroke-width="1.5"/>
+<line x1="560.5" y1="202.9" x2="560.5" y2="202.8" stroke="#c05621" stroke-width="1.5"/>
+<line x1="652.6" y1="104.8" x2="652.6" y2="104.5" stroke="#c05621" stroke-width="1.5"/>
+<polyline points="468.5,300.8 560.5,202.9 652.6,104.7" fill="none" stroke="#c05621" stroke-width="2"/>
+<circle cx="468.5" cy="300.8" r="4" fill="#c05621" stroke="#ffffff" stroke-width="1"/>
+<circle cx="560.5" cy="202.9" r="4" fill="#c05621" stroke="#ffffff" stroke-width="1"/>
+<circle cx="652.6" cy="104.7" r="4" fill="#c05621" stroke="#ffffff" stroke-width="1"/>
+<rect x="428.4" y="102.0" width="10" height="10" fill="#c05621"/>
+<text x="442.4" y="111.0">tma</text>
+<text x="909.9" y="70.0" text-anchor="middle" font-weight="bold">stages=8</text>
+<rect x="771.8" y="82.0" width="276.2" height="290.0" fill="none" stroke="#333333" stroke-width="1"/>
+<line x1="771.8" y1="372.0" x2="1048.0" y2="372.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="766.8" y="375.0" text-anchor="end">735.3</text>
+<line x1="771.8" y1="299.5" x2="1048.0" y2="299.5" stroke="#e0e0e0" stroke-width="1"/>
+<text x="766.8" y="302.5" text-anchor="end">2424</text>
+<line x1="771.8" y1="227.0" x2="1048.0" y2="227.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="766.8" y="230.0" text-anchor="end">4113</text>
+<line x1="771.8" y1="154.5" x2="1048.0" y2="154.5" stroke="#e0e0e0" stroke-width="1"/>
+<text x="766.8" y="157.5" text-anchor="end">5801</text>
+<line x1="771.8" y1="82.0" x2="1048.0" y2="82.0" stroke="#e0e0e0" stroke-width="1"/>
+<text x="766.8" y="85.0" text-anchor="end">7490</text>
+<text x="724.5" y="227.0" text-anchor="middle" transform="rotate(-90 724.5 227.0)">GB/s</text>
+<text x="817.8" y="388.0" text-anchor="middle">16 KiB</text>
+<text x="909.9" y="388.0" text-anchor="middle">32 KiB</text>
+<text x="1002.0" y="388.0" text-anchor="middle">64 KiB</text>
+<line x1="817.8" y1="317.7" x2="817.8" y2="317.5" stroke="#1f4e79" stroke-width="1.5"/>
+<line x1="909.9" y1="246.0" x2="909.9" y2="245.8" stroke="#1f4e79" stroke-width="1.5"/>
+<line x1="1002.0" y1="116.1" x2="1002.0" y2="115.9" stroke="#1f4e79" stroke-width="1.5"/>
+<polyline points="817.8,317.6 909.9,245.9 1002.0,116.0" fill="none" stroke="#1f4e79" stroke-width="2"/>
+<circle cx="817.8" cy="317.6" r="4" fill="#1f4e79" stroke="#ffffff" stroke-width="1"/>
+<circle cx="909.9" cy="245.9" r="4" fill="#1f4e79" stroke="#ffffff" stroke-width="1"/>
+<circle cx="1002.0" cy="116.0" r="4" fill="#1f4e79" stroke="#ffffff" stroke-width="1"/>
+<rect x="777.8" y="88.0" width="10" height="10" fill="#1f4e79"/>
+<text x="791.8" y="97.0">ldgsts</text>
+<line x1="817.8" y1="352.0" x2="817.8" y2="351.9" stroke="#c05621" stroke-width="1.5"/>
+<line x1="909.9" y1="300.6" x2="909.9" y2="300.4" stroke="#c05621" stroke-width="1.5"/>
+<line x1="1002.0" y1="197.7" x2="1002.0" y2="197.4" stroke="#c05621" stroke-width="1.5"/>
+<polyline points="817.8,352.0 909.9,300.5 1002.0,197.5" fill="none" stroke="#c05621" stroke-width="2"/>
+<circle cx="817.8" cy="352.0" r="4" fill="#c05621" stroke="#ffffff" stroke-width="1"/>
+<circle cx="909.9" cy="300.5" r="4" fill="#c05621" stroke="#ffffff" stroke-width="1"/>
+<circle cx="1002.0" cy="197.5" r="4" fill="#c05621" stroke="#ffffff" stroke-width="1"/>
+<rect x="777.8" y="102.0" width="10" height="10" fill="#c05621"/>
+<text x="791.8" y="111.0">tma</text>
+<text x="18" y="444" font-size="10" fill="#4b5563">
+<tspan x="18" y="444">n=3 final campaigns; the vertical line is the min-max whisker over exactly 3 campaign-level values, one per final campaign. Derived effective</tspan>
+<tspan x="18" y="457">transfer rate of a streaming microbenchmark (logical useful_bytes / measured kernel time), NOT measured HBM/DRAM bandwidth and not GEMM traffic; not</tspan>
+<tspan x="18" y="470">an HBM saturation threshold.</tspan>
+</text>
+</svg>
