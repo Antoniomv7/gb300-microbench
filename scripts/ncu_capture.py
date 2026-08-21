@@ -108,12 +108,11 @@ COLLECTION_FLAGS = (
     "--print-summary", "none",
 )
 # The raw page is row-oriented: each metric is emitted as Metric Name,
-# Metric Unit and Metric Value.  Request stable identifiers rather than the
-# default labels, base units for explicit scaling, and floating-point values
-# that Python can parse without display-oriented formatting.
+# Metric Unit and Metric Value.  It already uses metric identifiers;
+# --print-metric-name is only valid for the details page.  Request base units
+# and floating-point values that Python can parse without display formatting.
 EXPORT_FLAGS = (
     "--csv", "--page", "raw",
-    "--print-metric-name", "name",
     "--print-units", "base",
     "--print-fp",
     "--print-kernel-base", "function",
