@@ -107,8 +107,8 @@ COLLECTION_FLAGS = (
     "--replay-mode", "kernel",
     "--print-summary", "none",
 )
-# The raw page is row-oriented: each metric is emitted as Metric Name,
-# Metric Unit and Metric Value.  It already uses metric identifiers;
+# The raw CSV names each metric in its header, followed by a unit row and one
+# row per profiled launch.  It already uses metric identifiers;
 # --print-metric-name is only valid for the details page.  Request base units
 # and floating-point values that Python can parse without display formatting.
 EXPORT_FLAGS = (
@@ -143,12 +143,59 @@ def canonical_metric(metric_name: str, candidates: tuple[str, ...]) -> str | Non
     return matches[0] if len(matches) == 1 else None
 
 
-def parse_ncu_raw_csv(text: str, candidates: tuple[str, ...]) -> dict:
-    """Parse one row-oriented ``ncu --page raw --csv`` export.
+def parse_wide_ncu_raw_csv(
+    table: list[list[str]], header: list[str], candidates: tuple[str, ...]
+) -> dict:
+    """Parse NCU's raw CSV: metric columns, a units row and one launch."""
+    if len(table) != 3:
+        raise NcuParseError(
+            "expected a header, one units row and exactly one profiled launch, "
+            f"got {len(table)} rows")
 
-    Nsight Compute emits one row per metric.  All rows must describe exactly
-    one profiled launch, and at least one requested metric must resolve to a
-    finite, non-negative numeric value.
+    unit_row, value_row = table[1:]
+    for row_number, row in ((2, unit_row), (3, value_row)):
+        if len(row) != len(header):
+            raise NcuParseError(
+                f"profiler row {row_number} has width {len(row)}, expected {len(header)}")
+
+    identity_positions = {column: header.index(column) for column in NCU_IDENTITY_COLUMNS}
+    if any(unit_row[position].strip() for position in identity_positions.values()):
+        raise NcuParseError("wide profiler CSV lacks its separate units row")
+
+    launch_id = value_row[identity_positions["ID"]].strip()
+    kernel_name = value_row[identity_positions["Kernel Name"]].strip()
+    if not launch_id or not kernel_name:
+        raise NcuParseError("profiled launch lacks its ID or kernel name")
+
+    metrics: dict[str, float] = {}
+    units: dict[str, str] = {}
+    for position, column in enumerate(header):
+        metric_name = canonical_metric(column, candidates)
+        if metric_name is None:
+            continue
+        if metric_name in metrics:
+            raise NcuParseError(f"duplicate requested metric {metric_name!r}")
+        raw_value = value_row[position].strip().replace(",", "")
+        try:
+            value = float(raw_value)
+        except ValueError:
+            continue
+        if not math.isfinite(value) or value < 0:
+            continue
+        metrics[metric_name] = value
+        units[metric_name] = unit_row[position].strip()
+
+    if not metrics:
+        raise NcuParseError("none of the requested metrics resolved to a usable value")
+    return {"kernel_name": kernel_name, "metrics": metrics, "units": units}
+
+
+def parse_ncu_raw_csv(text: str, candidates: tuple[str, ...]) -> dict:
+    """Parse one ``ncu --page raw --csv`` export.
+
+    Raw exports contain metric columns, one units row and one row per launch.
+    Older row-per-metric exports remain accepted for historical compatibility.
+    Exactly one launch and one usable requested metric are always required.
     """
     try:
         table = [
@@ -166,11 +213,14 @@ def parse_ncu_raw_csv(text: str, candidates: tuple[str, ...]) -> dict:
         header[0] = header[0].lstrip("\ufeff")
     if len(header) != len(set(header)):
         raise NcuParseError("duplicate column name in the profiler header")
-    required = (*NCU_IDENTITY_COLUMNS, *NCU_METRIC_COLUMNS)
-    missing = [column for column in required if column not in header]
+    missing = [column for column in NCU_IDENTITY_COLUMNS if column not in header]
     if missing:
         raise NcuParseError(f"header lacks {missing}")
 
+    if not all(column in header for column in NCU_METRIC_COLUMNS):
+        return parse_wide_ncu_raw_csv(table, header, candidates)
+
+    required = (*NCU_IDENTITY_COLUMNS, *NCU_METRIC_COLUMNS)
     positions = {column: header.index(column) for column in required}
     launches: set[tuple[str, str]] = set()
     metrics: dict[str, float] = {}
@@ -354,8 +404,8 @@ def capture_case(entry: dict, *, ncu_binary: str, dry_run: bool) -> tuple[dict, 
         return record, ""
     try:
         parse_ncu_raw_csv(exported, entry["metrics"])
-    except NcuParseError:
-        record["reason"] = "profiler_csv_unusable"
+    except NcuParseError as exc:
+        record["reason"] = f"profiler_csv_unusable:{exc}"
         return record, ""
 
     record["status"] = "captured"
