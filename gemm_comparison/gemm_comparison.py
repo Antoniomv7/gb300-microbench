@@ -8,7 +8,6 @@ import importlib.util
 import math
 import os
 import sys
-import time
 from pathlib import Path
 
 SHAPES = ((4096, 4096, 4096, 1), (8192, 8192, 8192, 1),
@@ -27,21 +26,11 @@ CANDIDATES = (
     {"method": "cublaslt", "variant": "heuristic_first_supported"},
 )
 FIELDS = ("shape_index", "shape_id", "m", "n", "k", "l", "candidate_index",
-          "method", "variant", "correctness", "mismatches", "max_abs_error",
-          "max_rel_error", "warmup_iterations", "iterations", "compile_time_ms",
-          "setup_time_ms", "first_launch_ms", "kernel_time_ms", "tflops",
-          "throughput_ratio_vs_cublaslt", "gap_to_cublaslt_pct",
-          "best_cutedsl_variant", "rank_within_shape", "workspace_bytes",
-          "heuristic_index", "algorithm_id")
+          "method", "variant", "kernel_time_ms", "tflops",
+          "throughput_ratio_vs_cublaslt", "correctness")
 EXAMPLES = Path("/opt/cutlass/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm")
-BRIDGE_LIBRARY = Path("/tmp/gb300-cublaslt/libcublaslt_bridge.so")
+BRIDGE_LIBRARY = Path(__file__).resolve().parents[1] / "build/gemm_comparison/libcublaslt_bridge.so"
 ATOL, RTOL = 0.1, 1e-5
-
-
-class PlanInfo(ctypes.Structure):
-    _fields_ = [("workspace_bytes", ctypes.c_int64),
-                ("heuristic_index", ctypes.c_int64),
-                ("algorithm_id", ctypes.c_int64)]
 
 
 class CublasLtBridge:
@@ -49,7 +38,7 @@ class CublasLtBridge:
         self.library = ctypes.CDLL(str(BRIDGE_LIBRARY))
         self.library.gb_last_error.restype = ctypes.c_char_p
         self.library.gb_plan_create.argtypes = [ctypes.c_int64] * 3 + [ctypes.c_void_p] * 5 + [
-            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(PlanInfo)]
+            ctypes.POINTER(ctypes.c_void_p)]
         self.library.gb_plan_execute.argtypes = [ctypes.c_void_p]
         self.library.gb_plan_destroy.argtypes = [ctypes.c_void_p]
         self.plan = ctypes.c_void_p()
@@ -59,11 +48,9 @@ class CublasLtBridge:
             raise RuntimeError(self.library.gb_last_error().decode())
 
     def create(self, m, n, k, a, b, c, stream):
-        info = PlanInfo()
         self.check(self.library.gb_plan_create(
             m, n, k, a.data_ptr(), b.data_ptr(), c.data_ptr(), c.data_ptr(),
-            stream.cuda_stream, ctypes.byref(self.plan), ctypes.byref(info)))
-        return info
+            stream.cuda_stream, ctypes.byref(self.plan)))
 
     def execute(self):
         self.check(self.library.gb_plan_execute(self.plan))
@@ -129,10 +116,8 @@ def validate_result(torch, output, reference, label):
     difference = (output - reference).abs()
     mismatches = int((difference > ATOL + RTOL * reference.abs()).sum().item())
     absolute = float(difference.max().item())
-    relative = float((difference / reference.abs().clamp_min(1.0)).max().item())
-    if mismatches or not math.isfinite(absolute) or not math.isfinite(relative):
+    if mismatches or not math.isfinite(absolute):
         raise RuntimeError(f"{label}: {mismatches} mismatches; maximum error {absolute}")
-    return absolute, relative
 
 
 def prepare_cutedsl(specification, modules, shape, operands, cute, cutlass, stream):
@@ -153,10 +138,8 @@ def prepare_cutedsl(specification, modules, shape, operands, cute, cutlass, stre
         compile_args = (*tensors, stream)
     if not supported:
         raise RuntimeError(f"{specification['variant']}: unsupported configuration")
-    started = time.perf_counter_ns()
     compiled = cute.compile(kernel, *compile_args)
-    compile_ms = (time.perf_counter_ns() - started) / 1e6
-    return lambda: compiled(*tensors, stream), {"compile_time_ms": compile_ms}
+    return lambda: compiled(*tensors, stream)
 
 
 def measure_candidate(specification, modules, shape, operands, reference, context, warmup, count):
@@ -168,24 +151,17 @@ def measure_candidate(specification, modules, shape, operands, reference, contex
     bridge = None
     try:
         if specification["method"] == "cutedsl":
-            launch, details = prepare_cutedsl(specification, modules, shape, operands,
-                                              cute, cutlass, cute_stream)
+            launch = prepare_cutedsl(specification, modules, shape, operands,
+                                     cute, cutlass, cute_stream)
         else:
             bridge = CublasLtBridge()
-            started = time.perf_counter_ns()
-            info = bridge.create(*shape[:3], operands["a_gpu"], operands["b_gpu"],
-                                 operands["output"], torch_stream)
-            details = {"setup_time_ms": (time.perf_counter_ns() - started) / 1e6,
-                       "workspace_bytes": info.workspace_bytes,
-                       "heuristic_index": info.heuristic_index,
-                       "algorithm_id": info.algorithm_id}
+            bridge.create(*shape[:3], operands["a_gpu"], operands["b_gpu"],
+                          operands["output"], torch_stream)
             launch = bridge.execute
 
-        started = time.perf_counter_ns()
         launch()
         torch.cuda.synchronize()
-        details["first_launch_ms"] = (time.perf_counter_ns() - started) / 1e6
-        absolute, relative = validate_result(torch, operands["output"], reference, label)
+        validate_result(torch, operands["output"], reference, label)
         for _ in range(warmup):
             launch()
         torch.cuda.synchronize()
@@ -198,9 +174,7 @@ def measure_candidate(specification, modules, shape, operands, reference, contex
         duration = start.elapsed_time(end) / count
         if not math.isfinite(duration) or duration <= 0:
             raise RuntimeError(f"{label}: invalid CUDA-event duration")
-        return {**details, "correctness": "PASS", "mismatches": 0,
-                "max_abs_error": absolute, "max_rel_error": relative,
-                "kernel_time_ms": duration,
+        return {"correctness": "PASS", "kernel_time_ms": duration,
                 "tflops": 2 * math.prod(shape) / duration / 1e9}
     finally:
         if bridge is not None:
@@ -225,19 +199,12 @@ def run(warmup, iterations):
                                           context, warmup, iterations)
                         for candidate in CANDIDATES]
         baseline = measurements[-1]["tflops"]
-        best = max(range(3), key=lambda index: measurements[index]["tflops"])
-        order = sorted(range(4), key=lambda index: measurements[index]["tflops"], reverse=True)
         for index, (candidate, measured) in enumerate(zip(CANDIDATES, measurements)):
-            ratio = measured["tflops"] / baseline
             rows.append({"shape_index": shape_index, "shape_id": "x".join(map(str, shape)),
                          **dict(zip(("m", "n", "k", "l"), shape)),
                          "candidate_index": index, "method": candidate["method"],
-                         "variant": candidate["variant"], "warmup_iterations": warmup,
-                         "iterations": iterations, **measured,
-                         "throughput_ratio_vs_cublaslt": ratio,
-                         "gap_to_cublaslt_pct": 100 * (1 - ratio),
-                         "best_cutedsl_variant": CANDIDATES[best]["variant"],
-                         "rank_within_shape": order.index(index) + 1})
+                         "variant": candidate["variant"], **measured,
+                         "throughput_ratio_vs_cublaslt": measured["tflops"] / baseline})
         del reference, operands, measurements
         torch.cuda.synchronize()
         torch.cuda.empty_cache()

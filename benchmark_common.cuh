@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <ctime>
 #include <string>
 
 #include <cuda_runtime.h>
@@ -21,15 +20,6 @@ inline cudaDeviceProp benchmark_device_properties() {
         std::exit(1);
     }
     return properties;
-}
-
-inline std::string now_utc_iso8601() {
-    const std::time_t timestamp = std::time(nullptr);
-    std::tm utc{};
-    gmtime_r(&timestamp, &utc);
-    char output[32];
-    std::strftime(output, sizeof(output), "%Y-%m-%dT%H:%M:%SZ", &utc);
-    return output;
 }
 
 inline bool parse_int_arg(const std::string& input, int64_t* output) {

@@ -56,7 +56,7 @@ export BLACKWELL_GPU_INDEX=7
 make smoke
 ```
 
-Run one pilot and three complete final campaigns, each including all four experiments and the essential Nsight Compute counters:
+Run one short pilot and three complete final campaigns. Final campaigns include the essential Nsight Compute counters:
 
 ```bash
 make campaign CAMPAIGN_KIND=pilot CAMPAIGN_ID=pilot
@@ -71,7 +71,7 @@ Generate four CSV summaries and four SVG figures without overwriting the publish
 make analyze FINAL_CAMPAIGNS="final-1 final-2 final-3" ANALYSIS_OUT=results/generated
 ```
 
-`make sass` optionally regenerates all five CUDA disassemblies in `build/sass/`. Historical disassemblies remain recoverable from commit `de8bcd59bf1debf9fcff234a154954cf90aee422`.
+`make sass` optionally generates the five CUDA disassemblies in `build/sass/`.
 
 ## Measurement boundaries
 
@@ -79,9 +79,9 @@ make analyze FINAL_CAMPAIGNS="final-1 final-2 final-3" ANALYSIS_OUT=results/gene
 - Each final campaign contains 540 memory samples, 720 isolated UMMA samples, 120 device-scaling samples and 20 GEMM rows.
 - Whole-device UMMA requires simultaneous residency and observed coverage of every planned SM.
 - The UMMA baseline uses BF16 inputs and FP32 accumulation; GEMM candidates share operands and an untimed IEEE-FP32 reference.
-- Nsight Compute provides the DRAM cross-check and measured SM frequency; a partial capture is recorded explicitly.
+- Nsight Compute provides the DRAM cross-check and measured SM frequency.
 - Three campaigns support descriptive statistics, not significance testing or architectural peak claims.
 
-The measurement kernels originate from [gb300-gemm-anatomy](https://github.com/Antoniomv7/gb300-gemm-anatomy), commit `86f2382fb92a957035c067ae725e9e25afacab6f`. Campaign and hardware identifiers for the existing results are in `provenance/provenance.json`.
+The measurement kernels originate from [gb300-gemm-anatomy](https://github.com/Antoniomv7/gb300-gemm-anatomy), commit `86f2382fb92a957035c067ae725e9e25afacab6f`.
 
 BSD 3-Clause; see `LICENSE`.

@@ -90,17 +90,11 @@ uint32_t alignment(const void* pointer) {
 
 extern "C" {
 
-struct GbPlanInfo {
-    int64_t workspace_bytes;
-    int64_t heuristic_index;
-    int64_t algorithm_id;
-};
-
 const char* gb_last_error() { return g_error; }
 
 int gb_plan_create(int64_t m, int64_t n, int64_t k, const void* a, const void* b,
-                   const void* c, void* d, void* stream, Plan** result, GbPlanInfo* info) {
-    if (m <= 0 || n <= 0 || k <= 0 || !a || !b || !c || !d || !result || !info)
+                   const void* c, void* d, void* stream, Plan** result) {
+    if (m <= 0 || n <= 0 || k <= 0 || !a || !b || !c || !d || !result)
         return fail("invalid cuBLASLt plan arguments");
 
     std::unique_ptr<Plan> plan(new (std::nothrow) Plan());
@@ -168,25 +162,9 @@ int gb_plan_create(int64_t m, int64_t n, int64_t k, const void* a, const void* b
     }
     if (selected < 0) return fail("cuBLASLt did not return a supported algorithm");
     plan->algorithm = candidates[selected].algo;
-    cublasLtMatmulHeuristicResult_t checked = {};
-    CHECK_LT(cublasLtMatmulAlgoCheck(
-        plan->handle, plan->operation, plan->a_layout, plan->b_layout,
-        plan->c_layout, plan->d_layout, &plan->algorithm, &checked));
-    if (checked.state != CUBLAS_STATUS_SUCCESS || checked.workspaceSize > kWorkspaceLimit)
-        return fail("the selected cuBLASLt algorithm exceeds the workspace limit");
-
-    plan->workspace_bytes = checked.workspaceSize;
+    plan->workspace_bytes = candidates[selected].workspaceSize;
     if (plan->workspace_bytes && cudaMalloc(&plan->workspace, plan->workspace_bytes) != cudaSuccess)
         return fail("cannot allocate the cuBLASLt workspace");
-
-    int32_t algorithm_id = -1;
-    size_t written = 0;
-    CHECK_LT(cublasLtMatmulAlgoConfigGetAttribute(
-        &plan->algorithm, CUBLASLT_ALGO_CONFIG_ID, &algorithm_id,
-        sizeof(algorithm_id), &written));
-    info->workspace_bytes = static_cast<int64_t>(plan->workspace_bytes);
-    info->heuristic_index = selected;
-    info->algorithm_id = algorithm_id;
     *result = plan.release();
     return 0;
 }

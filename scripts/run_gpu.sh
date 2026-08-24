@@ -19,5 +19,6 @@ echo "run_gpu: GPU ${BLACKWELL_GPU_INDEX} (${gpu_uuid})" >&2
 
 exec docker run --rm --gpus "device=${gpu_uuid}" \
     --user "$(id -u):$(id -g)" -e HOME=/tmp \
+    -e "BLACKWELL_GPU_UUID=${gpu_uuid}" \
     -v "${repo_root}:/workspace" -w /workspace \
     "${IMAGE_TAG:-gb300-microbench:latest}" "$@"

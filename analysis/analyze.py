@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate three final campaigns and generate the four thesis figures."""
-
-from __future__ import annotations
+"""Summarize three campaigns and generate four thesis figures."""
 
 import argparse
 import csv
@@ -14,301 +12,199 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-NA = "not_applicable"
-CAMPAIGNS = 3
 METHODS = ("ldgsts", "tma")
 UMMA_METHODS = ("umma_1sm", "umma_2sm")
+EXPERIMENTS = ("memory_paths", "umma_throughput", "umma_device_scaling", "gemm_comparison")
 COLORS = {"ldgsts": "#2563eb", "tma": "#d97706",
           "umma_1sm": "#2563eb", "umma_2sm": "#d97706"}
-GEMM_COLORS = {
-    "nonpersistent_1cta": "#2563eb", "persistent_1cta": "#7c3aed",
-    "persistent_2cta": "#d97706", "heuristic_first_supported": "#15803d",
-}
-AGGREGATES = ("mean", "median", "stdev_sample", "cross_campaign_cv_percent",
-              "minimum", "maximum", "cross_campaign_cv_review_flag")
-BASE_FIELDS = ("metric", "unit", "evidence_class", "campaign_count",
-               "campaign_1_value", "campaign_2_value", "campaign_3_value", *AGGREGATES, "notes")
-FIELDS = {
-    "memory_paths": ("schema_version", "section", "method", "stages",
-                     "bytes_in_flight_kib", *BASE_FIELDS),
-    "umma_throughput": ("schema_version", "section", "method", "n", "depth",
-                        "cta_group", *BASE_FIELDS),
-    "umma_device_scaling": ("schema_version", "section", "method", "scale", *BASE_FIELDS),
-    "gemm_comparison": ("schema_version", "section", "shape_index", "shape_id", "m", "n",
-                        "k", "l", "candidate_index", "variant", "method", *BASE_FIELDS),
-}
+GEMM_COLORS = {"nonpersistent_1cta": "#2563eb", "persistent_1cta": "#7c3aed",
+               "persistent_2cta": "#d97706", "heuristic_first_supported": "#15803d"}
 
 
-def read_csv(path):
-    with path.open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+def stats(values):
+    if len(values) != 3 or any(not math.isfinite(value) for value in values):
+        raise ValueError("three finite campaign values are required")
+    mean = statistics.fmean(values)
+    deviation = statistics.stdev(values)
+    return {"mean": mean, "median": statistics.median(values), "stdev_sample": deviation,
+            "cv_percent": abs(100 * deviation / mean) if mean else 0,
+            "minimum": min(values), "maximum": max(values)}
+
+
+def compact_stats(values, unit):
+    summary = stats(values)
+    return {f"campaign_{index}_{unit}": value for index, value in enumerate(values, 1)} | {
+        f"mean_{unit}": summary["mean"], f"stdev_{unit}": summary["stdev_sample"],
+        "cv_percent": summary["cv_percent"]}
 
 
 def read_campaign(path):
     path = path.resolve()
     metadata = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
-    if metadata.get("kind") != "final":
+    if metadata["kind"] != "final":
         raise ValueError(f"{path.name} is not a final campaign")
-    datasets = {name: read_csv(path / "raw" / f"{name}.csv") for name in FIELDS}
-    for name, rows in datasets.items():
-        if not rows or any(row.get("correctness") not in ("OK", "PASS") for row in rows):
-            raise ValueError(f"{path.name}/{name}: missing or numerically invalid samples")
+    datasets = {}
+    for experiment in EXPERIMENTS:
+        with (path / "raw" / f"{experiment}.csv").open(newline="", encoding="utf-8") as source:
+            datasets[experiment] = list(csv.DictReader(source))
     profile_path = path / "ncu/index.json"
     profile = json.loads(profile_path.read_text(encoding="utf-8")) if profile_path.exists() else {}
-    return {"path": path, "metadata": metadata, "data": datasets, "profile": profile}
+    return {"metadata": metadata, "data": datasets, "profile": profile}
 
 
-def validate_campaigns(records):
-    if len(records) != CAMPAIGNS:
-        raise ValueError("exactly three final campaigns are required")
-    ids = [record["metadata"]["campaign_id"] for record in records]
-    if len(set(ids)) != CAMPAIGNS:
-        raise ValueError("final campaigns must be distinct")
-    uuids = {record["metadata"]["gpu"]["uuid"] for record in records}
-    if len(uuids) != 1:
-        raise ValueError("final campaigns must use the same physical GPU")
-
-
-def stats(values):
-    if len(values) != CAMPAIGNS or any(not math.isfinite(value) for value in values):
-        raise ValueError("cross-campaign statistics require three finite values")
-    mean = statistics.fmean(values)
-    deviation = statistics.stdev(values)
-    return {"mean": mean, "median": statistics.median(values), "stdev_sample": deviation,
-            "cv_percent": abs(100.0 * deviation / mean) if mean else 0.0,
-            "minimum": min(values), "maximum": max(values)}
-
-
-def fmt(value):
-    if value is None:
-        return NA
-    if isinstance(value, float):
-        return f"{value:.9f}" if math.isfinite(value) else NA
-    return str(value)
-
-
-def result_row(section, keys, metric, unit, values, *, evidence="derived", notes="", signed=False):
-    row = {"schema_version": "gb300.analysis.v2", "section": section, **keys,
-           "metric": metric, "unit": unit, "evidence_class": evidence,
-           "campaign_count": CAMPAIGNS, "notes": notes}
-    row.update({f"campaign_{index}_value": fmt(value)
-                for index, value in enumerate(values, 1)})
-    numeric = all(isinstance(value, (int, float)) and not isinstance(value, bool)
-                  and math.isfinite(value) for value in values)
-    if numeric:
-        summary = stats([float(value) for value in values])
-        row.update({"mean": fmt(summary["mean"]), "median": fmt(summary["median"]),
-                    "stdev_sample": fmt(summary["stdev_sample"]),
-                    "cross_campaign_cv_percent": NA if signed else fmt(summary["cv_percent"]),
-                    "minimum": fmt(summary["minimum"]), "maximum": fmt(summary["maximum"]),
-                    "cross_campaign_cv_review_flag": NA if signed else
-                    ("REVIEW" if summary["cv_percent"] > 5.0 else "ok")})
-    else:
-        row.update({field: NA for field in AGGREGATES})
-    return row
-
-
-def grouped_medians(rows, key_fields, value_field, transform=lambda value, row: value):
+def grouped_medians(rows, fields, value):
     groups = defaultdict(list)
     for row in rows:
-        key = tuple(row[field] for field in key_fields)
-        value = float(row[value_field])
-        if not math.isfinite(value):
-            raise ValueError(f"non-finite {value_field} in {key}")
-        groups[key].append(transform(value, row))
-    return {key: statistics.median(values) for key, values in groups.items()}
+        groups[tuple(row[field] for field in fields)].append(float(row[value]))
+    return {key: statistics.median(samples) for key, samples in groups.items()}
 
 
 def profile_case(record, section, method, **parameters):
-    for case in record["profile"].get("cases", []):
-        if case.get("status") != "captured" or case.get("section") != section:
-            continue
-        if case.get("method") == method and all(case.get(key) == value
-                                                  for key, value in parameters.items()):
-            return case
-    return None
+    return next((case for case in record["profile"].get("cases", [])
+                 if case["section"] == section and case["method"] == method and
+                 all(case.get(key) == value for key, value in parameters.items())), None)
 
 
 def memory_results(records):
-    per_campaign = [grouped_medians(record["data"]["memory_paths"],
-                                    ("method", "stages", "bytes_in_flight_per_sm"),
-                                    "effective_gbps") for record in records]
+    campaigns = [grouped_medians(record["data"]["memory_paths"],
+                                 ("method", "stages", "bytes_in_flight_per_sm"),
+                                 "effective_gbps") for record in records]
     rows, points = [], []
     for stages in (2, 4, 8):
         for size in (16, 32, 64):
+            ratios = [campaign[("tma", str(stages), str(size * 1024))] /
+                      campaign[("ldgsts", str(stages), str(size * 1024))]
+                      for campaign in campaigns]
             for method in METHODS:
                 key = (method, str(stages), str(size * 1024))
-                values = [campaign[key] for campaign in per_campaign]
-                keys = {"method": method, "stages": stages, "bytes_in_flight_kib": size}
-                rows.append(result_row("configuration", keys, "median_effective_gbps", "GB/s",
-                                       values, evidence="timing_derived"))
-                points.append({**keys, **stats(values)})
-
-            ratios = [campaign[("tma", str(stages), str(size * 1024))]
-                      / campaign[("ldgsts", str(stages), str(size * 1024))]
-                      for campaign in per_campaign]
-            rows.append(result_row("pair_ratio", {"method": NA, "stages": stages,
-                                                   "bytes_in_flight_kib": size},
-                                   "tma_to_ldgsts_ratio", "ratio", ratios))
-
-    for method, stages, size in (("ldgsts", 2, 16), ("tma", 2, 16),
-                                 ("ldgsts", 4, 32), ("tma", 4, 32),
-                                 ("ldgsts", 8, 64), ("tma", 8, 64)):
-        values = []
-        for record in records:
-            case = profile_case(record, "memory_paths", method,
-                                stages=stages, bytes_in_flight_kib=size)
-            metric = "dram__bytes_read.sum"
-            if case and case.get("units", {}).get(metric, "").lower() == "byte":
-                useful = case.get("useful_bytes")
-                values.append(case["metrics"][metric] / useful if useful else None)
-            else:
-                values.append(None)
-        rows.append(result_row("ncu_validation", {"method": method, "stages": stages,
-                                                    "bytes_in_flight_kib": size},
-                               "dram_read_ratio", "ratio", values, evidence="ncu_counter",
-                               notes="unavailable" if any(value is None for value in values) else ""))
-
+                values = [campaign[key] for campaign in campaigns]
+                dram = []
+                for record in records:
+                    case = profile_case(record, "memory_paths", method,
+                                        stages=stages, bytes_in_flight_kib=size)
+                    if case and case.get("useful_bytes"):
+                        dram.append(case["metrics"]["dram__bytes_read.sum"] / case["useful_bytes"])
+                rows.append({"method": method, "stages": stages, "bytes_in_flight_kib": size,
+                             **compact_stats(values, "gbps"),
+                             "tma_to_ldgsts_ratio": stats(ratios)["mean"],
+                             "dram_read_ratio": stats(dram)["mean"] if len(dram) == 3 else ""})
+                points.append({"method": method, "stages": stages,
+                               "bytes_in_flight_kib": size, **stats(values)})
     maxima = {method: max((point for point in points if point["method"] == method),
                           key=lambda point: point["mean"]) for method in METHODS}
     return rows, {"configurations": points, "maximum_by_method": maxima}
 
 
 def umma_results(records):
-    per_campaign = [grouped_medians(record["data"]["umma_throughput"],
-                                    ("method", "n", "depth"), "flops_per_cycle")
-                    for record in records]
+    campaigns = [grouped_medians(record["data"]["umma_throughput"],
+                                 ("method", "n", "depth"), "flops_per_cycle")
+                 for record in records]
     rows, points = [], []
     for n in (64, 128, 256):
         for depth in (4, 16, 64, 256):
+            ratios = [campaign[("umma_2sm", str(n), str(depth))] /
+                      campaign[("umma_1sm", str(n), str(depth))] for campaign in campaigns]
             for method in UMMA_METHODS:
                 group = 1 if method == "umma_1sm" else 2
-                values = [campaign[(method, str(n), str(depth))] for campaign in per_campaign]
-                per_sm = [value / group for value in values]
-                keys = {"method": method, "n": n, "depth": depth, "cta_group": group}
-                rows.append(result_row("configuration", keys, "median_flops_per_cycle",
-                                       "FLOP/cycle", values, evidence="clock64_measured"))
-                rows.append(result_row("configuration", keys, "median_flops_per_cycle_per_sm",
-                                       "FLOP/cycle/SM", per_sm, evidence="clock64_measured"))
-                points.append({**keys, **stats(per_sm), "total": stats(values)})
-
-            ratios = [campaign[("umma_2sm", str(n), str(depth))]
-                      / campaign[("umma_1sm", str(n), str(depth))] for campaign in per_campaign]
-            rows.append(result_row("scaling", {"method": "umma_2sm", "n": n,
-                                                "depth": depth, "cta_group": 2},
-                                   "two_sm_to_one_sm_ratio", "ratio", ratios))
+                totals = [campaign[(method, str(n), str(depth))] for campaign in campaigns]
+                per_sm = [value / group for value in totals]
+                rows.append({"method": method, "n": n, "depth": depth, "cta_group": group,
+                             **compact_stats(per_sm, "flops_cycle_sm"),
+                             "mean_flops_per_cycle": stats(totals)["mean"],
+                             "two_sm_to_one_sm_ratio": stats(ratios)["mean"],
+                             "estimated_tflops_per_sm": ""})
+                points.append({"method": method, "n": n, "depth": depth,
+                               "cta_group": group, **stats(per_sm), "total": stats(totals)})
 
     best = max(points, key=lambda point: point["mean"])
-    values = []
-    for record, campaign in zip(records, per_campaign):
+    estimates = []
+    metric = "sm__cycles_elapsed.avg.per_second"
+    for record, campaign in zip(records, campaigns):
         case = profile_case(record, "umma_throughput", best["method"],
                             n=best["n"], depth=best["depth"])
-        metric = "sm__cycles_elapsed.avg.per_second"
-        unit = case.get("units", {}).get(metric, "").lower() if case else ""
-        factor = {"cycle/nsecond": 1e9, "hz": 1.0}.get(unit)
-        if case and factor is not None:
-            cycles = campaign[(best["method"], str(best["n"]), str(best["depth"]))]
-            values.append(cycles / best["cta_group"] * case["metrics"][metric] * factor / 1e12)
-        else:
-            values.append(None)
-    rows.append(result_row("ceiling", {"method": best["method"], "n": best["n"],
-                                        "depth": best["depth"], "cta_group": best["cta_group"]},
-                           "estimated_tflops_per_sm", "TFLOP/s/SM", values,
-                           evidence="modeled_from_measured_clock",
-                           notes="NCU clock unavailable" if any(value is None for value in values) else ""))
-    ceiling = stats(values) if all(value is not None for value in values) else None
+        if case:
+            unit = case["units"].get(metric, "").lower()
+            factor = {"cycle/nsecond": 1e9, "hz": 1.0}.get(unit)
+            if factor:
+                cycles = campaign[(best["method"], str(best["n"]), str(best["depth"]))]
+                estimates.append(cycles / best["cta_group"] * case["metrics"][metric] * factor / 1e12)
+    ceiling = stats(estimates) if len(estimates) == 3 else None
+    if ceiling:
+        next(row for row in rows if row["method"] == best["method"] and
+             row["n"] == best["n"] and row["depth"] == best["depth"])[
+                 "estimated_tflops_per_sm"] = ceiling["mean"]
     return rows, {"configurations": points, "best_per_sm_configuration": best,
                   "estimated_tflops_per_sm": ceiling}
 
 
 def scaling_results(records):
-    fields = ("total_tflops", "kernel_time_ms", "tflops_per_planned_active_sm")
-    per_campaign = []
+    campaigns = []
     for record in records:
-        grouped = {}
-        for field in fields:
-            grouped[field] = grouped_medians(record["data"]["umma_device_scaling"],
-                                              ("method", "scale"), field)
-        per_campaign.append(grouped)
+        values = {}
+        for field in ("total_tflops", "kernel_time_ms", "tflops_per_planned_active_sm"):
+            values[field] = grouped_medians(record["data"]["umma_device_scaling"],
+                                            ("method", "scale"), field)
+        campaigns.append(values)
 
-    rows, configurations = [], []
-    geometry = {}
+    rows, points, geometry = [], [], {}
     for method in UMMA_METHODS:
         for scale in ("isolated", "device_scale"):
             key = (method, scale)
-            keys = {"method": method, "scale": scale}
-            first = next(row for row in records[0]["data"]["umma_device_scaling"]
-                         if (row["method"], row["scale"]) == key)
-            geometry[key] = first
-            for field, metric, unit in (("total_tflops", "median_total_tflops", "TFLOP/s"),
-                                        ("kernel_time_ms", "median_kernel_time_ms", "ms"),
-                                        ("tflops_per_planned_active_sm",
-                                         "median_tflops_per_planned_active_sm", "TFLOP/s/SM")):
-                values = [campaign[field][key] for campaign in per_campaign]
-                rows.append(result_row("configuration", keys, metric, unit, values,
-                                       evidence="cuda_event_measured"))
-            for field in ("planned_active_sm_count", "observed_unique_sm_count",
-                          "work_unit_count", "cluster_count", "residency_evidence"):
-                values = []
-                for record in records:
-                    sample = next(row for row in record["data"]["umma_device_scaling"]
-                                  if (row["method"], row["scale"]) == key)
-                    values.append(sample[field])
-                rows.append(result_row("coverage", keys, field, NA, values,
-                                       evidence="launch_coverage"))
-            values = [campaign["total_tflops"][key] for campaign in per_campaign]
-            configurations.append({"method": method, "scale": scale,
-                                   "active_sms": int(first["planned_active_sm_count"]),
-                                   "work_units": int(first["work_unit_count"]), **stats(values)})
+            sample = next(row for row in records[0]["data"]["umma_device_scaling"]
+                          if (row["method"], row["scale"]) == key)
+            geometry[key] = sample
+            throughputs = [campaign["total_tflops"][key] for campaign in campaigns]
+            times = [campaign["kernel_time_ms"][key] for campaign in campaigns]
+            per_sm = [campaign["tflops_per_planned_active_sm"][key] for campaign in campaigns]
+            rows.append({"method": method, "scale": scale,
+                         "active_sms": int(sample["planned_active_sm_count"]),
+                         "work_units": int(sample["work_unit_count"]),
+                         "cluster_count": int(sample["cluster_count"]),
+                         **compact_stats(throughputs, "tflops"),
+                         "mean_kernel_time_ms": stats(times)["mean"],
+                         "mean_tflops_per_sm": stats(per_sm)["mean"],
+                         "scaling_efficiency_percent": ""})
+            points.append({"method": method, "scale": scale,
+                           "active_sms": int(sample["planned_active_sm_count"]),
+                           "work_units": int(sample["work_unit_count"]), **stats(throughputs)})
 
     efficiencies = {}
     for method in UMMA_METHODS:
-        device = (method, "device_scale")
-        units = int(geometry[device]["work_unit_count"])
-        values = [100.0 * campaign["total_tflops"][device]
-                  / (campaign["total_tflops"][(method, "isolated")] * units)
-                  for campaign in per_campaign]
-        name = f"scaling_efficiency_{method.split('_')[1]}_percent"
-        rows.append(result_row("scaling", {"method": method, "scale": "device_scale"},
-                               name, "percent", values))
+        units = int(geometry[(method, "device_scale")]["work_unit_count"])
+        values = [100 * campaign["total_tflops"][(method, "device_scale")] /
+                  (campaign["total_tflops"][(method, "isolated")] * units)
+                  for campaign in campaigns]
         efficiencies[method] = stats(values)
-
-    ratios = [campaign["total_tflops"][("umma_2sm", "device_scale")]
-              / campaign["total_tflops"][("umma_1sm", "device_scale")]
-              for campaign in per_campaign]
-    rows.append(result_row("scaling", {"method": NA, "scale": "device_scale"},
-                           "device_total_ratio_2sm_over_1sm", "ratio", ratios))
-    return rows, {"configurations": configurations, "scaling_efficiency": efficiencies,
+        next(row for row in rows if row["method"] == method and row["scale"] == "device_scale")[
+            "scaling_efficiency_percent"] = efficiencies[method]["mean"]
+    ratios = [campaign["total_tflops"][("umma_2sm", "device_scale")] /
+              campaign["total_tflops"][("umma_1sm", "device_scale")]
+              for campaign in campaigns]
+    return rows, {"configurations": points, "scaling_efficiency": efficiencies,
                   "device_total_ratio_2sm_over_1sm": stats(ratios),
                   "hardware_sm_count": int(next(iter(geometry.values()))["hardware_sm_count"])}
 
 
 def gemm_results(records):
-    campaigns = []
-    for record in records:
-        campaigns.append({(int(row["shape_index"]), int(row["candidate_index"])): row
-                          for row in record["data"]["gemm_comparison"]})
+    campaigns = [{(int(row["shape_index"]), int(row["candidate_index"])): row
+                  for row in record["data"]["gemm_comparison"]} for record in records]
     rows, points, shapes = [], [], []
     for key in sorted(campaigns[0]):
         entries = [campaign[key] for campaign in campaigns]
         first = entries[0]
-        keys = {field: first[field] for field in ("shape_index", "shape_id", "m", "n", "k",
-                                                  "l", "candidate_index", "variant", "method")}
-        for field, unit in (("kernel_time_ms", "ms"), ("tflops", "TFLOP/s"),
-                            ("throughput_ratio_vs_cublaslt", "ratio"),
-                            ("gap_to_cublaslt_pct", "percent")):
-            values = [float(entry[field]) for entry in entries]
-            rows.append(result_row("candidate", keys, field, unit, values,
-                                   evidence="cuda_event_measured" if field == "kernel_time_ms"
-                                   else "derived", signed=field == "gap_to_cublaslt_pct"))
+        values = [float(entry["tflops"]) for entry in entries]
+        durations = [float(entry["kernel_time_ms"]) for entry in entries]
+        ratios = [float(entry["throughput_ratio_vs_cublaslt"]) for entry in entries]
+        rows.append({field: first[field] for field in
+                     ("shape_index", "shape_id", "m", "n", "k", "l", "variant", "method")} |
+                    compact_stats(values, "tflops") |
+                    {"mean_kernel_time_ms": stats(durations)["mean"],
+                     "ratio_vs_cublaslt": stats(ratios)["mean"]})
         points.append({"shape_index": int(first["shape_index"]), "shape_id": first["shape_id"],
-                       "variant": first["variant"], "method": first["method"],
-                       **stats([float(entry["tflops"]) for entry in entries])})
-
+                       "variant": first["variant"], "method": first["method"], **stats(values)})
     for shape_index in sorted({point["shape_index"] for point in points}):
-        candidates = [point for point in points if point["shape_index"] == shape_index]
-        best = max((point for point in candidates if point["method"] == "cutedsl"),
-                   key=lambda point: point["mean"])
+        best = max((point for point in points if point["shape_index"] == shape_index
+                    and point["method"] == "cutedsl"), key=lambda point: point["mean"])
         shapes.append({"shape_index": shape_index, "shape_id": best["shape_id"],
                        "best_cutedsl_variant": best["variant"]})
     return rows, {"configurations": points, "shapes": shapes}
@@ -332,8 +228,7 @@ def svg_start(title, subtitle, width=1260, height=490):
 
 
 def line_figure(title, subtitle, panels, x_labels, y_label, footnote):
-    width, height = 1260, 490
-    output = svg_start(title, subtitle, width, height)
+    output = svg_start(title, subtitle)
     panel_width, gap, left, top, bottom = 330, 65, 82, 126, 382
     for index, panel in enumerate(panels):
         x0 = left + index * (panel_width + gap)
@@ -438,13 +333,13 @@ def gemm_figure(summary):
             center = xx + bar_width / 2
             output.append(f'<line x1="{center:.1f}" y1="{y(point["minimum"]):.1f}" '
                           f'x2="{center:.1f}" y2="{y(point["maximum"]):.1f}" stroke="#0f172a"/>')
-        short = shape_id.removesuffix("x1").split("x")
-        label = f"{short[0]}×{short[1]}"
+        label = "×".join(shape_id.removesuffix("x1").split("x")[:2])
         output.append(svg_text(left + (index + 0.5) * group_width, bottom + 26,
                                label, text_anchor="middle", font_size="11"))
     output.append(svg_text(18, 268, "TFLOP/s", text_anchor="middle",
                            transform="rotate(-90 18 268)"))
-    output.append(svg_text(34, 477, "Hot-cache kernel timing; all variants share operands and pass the same FP32 reference.",
+    output.append(svg_text(34, 477,
+                           "Hot-cache kernel timing; all variants share operands and pass the same FP32 reference.",
                            font_size="11", fill="#64748b"))
     return "\n".join([*output, "</svg>"]) + "\n"
 
@@ -453,11 +348,13 @@ def scaling_panel(output, x0, width, title, bars, unit, reference=None):
     top, bottom = 145, 376
     maximum = max([point["maximum"] for _, point in bars] + ([reference] if reference else [])) * 1.12
     y = lambda value: bottom - value * (bottom - top) / maximum
-    output.append(svg_text(x0 + width / 2, 119, title, text_anchor="middle", font_size="14", font_weight="700"))
+    output.append(svg_text(x0 + width / 2, 119, title, text_anchor="middle",
+                           font_size="14", font_weight="700"))
     for tick in range(5):
         value = maximum * tick / 4
         yy = y(value)
-        output.append(f'<line x1="{x0:.1f}" y1="{yy:.1f}" x2="{x0+width:.1f}" y2="{yy:.1f}" stroke="#e2e8f0"/>')
+        output.append(f'<line x1="{x0:.1f}" y1="{yy:.1f}" x2="{x0+width:.1f}" '
+                      f'y2="{yy:.1f}" stroke="#e2e8f0"/>')
         output.append(svg_text(x0 - 8, yy + 4, f"{value:,.0f}", text_anchor="end", font_size="10"))
     if reference:
         output.append(f'<line x1="{x0:.1f}" y1="{y(reference):.1f}" x2="{x0+width:.1f}" '
@@ -471,13 +368,13 @@ def scaling_panel(output, x0, width, title, bars, unit, reference=None):
         output.append(f'<line x1="{center:.1f}" y1="{y(point["minimum"]):.1f}" '
                       f'x2="{center:.1f}" y2="{y(point["maximum"]):.1f}" stroke="#0f172a"/>')
         output.append(svg_text(center, bottom + 23, method, text_anchor="middle", font_size="11"))
-    output.append(svg_text(x0 + width / 2, bottom + 44, unit, text_anchor="middle",
-                           font_size="11", fill="#64748b"))
+    output.append(svg_text(x0 + width / 2, bottom + 44, unit,
+                           text_anchor="middle", font_size="11", fill="#64748b"))
 
 
 def scaling_figure(summary):
     output = svg_start("BF16 UMMA: isolated work unit versus all usable SMs",
-                       "Independent throughput axes avoid mixing isolated and whole-device scales.", 1260, 490)
+                       "Independent throughput axes avoid mixing isolated and whole-device scales.")
     lookup = {(point["method"], point["scale"]): point for point in summary["configurations"]}
     scaling_panel(output, 86, 302, "Isolated work unit",
                   [(method, lookup[(method, "isolated")]) for method in UMMA_METHODS], "Total TFLOP/s")
@@ -487,49 +384,49 @@ def scaling_figure(summary):
                   [(method, summary["scaling_efficiency"][method]) for method in UMMA_METHODS],
                   "Percentage of ideal linear scaling", reference=100.0)
     output.append(svg_text(34, 465,
-                           "Whole-kernel CUDA-event timing; coverage requires the residency probe and observed SM identifiers.",
+                           "Whole-kernel CUDA-event timing; coverage requires simultaneous residency.",
                            font_size="11", fill="#64748b"))
     return "\n".join([*output, "</svg>"]) + "\n"
 
 
-def write_csv(path, fields, rows):
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
+def write_csv(path, rows):
+    with path.open("w", newline="", encoding="utf-8") as destination:
+        writer = csv.DictWriter(destination, fieldnames=list(rows[0]), lineterminator="\n")
         writer.writeheader()
         for row in rows:
-            writer.writerow({field: row.get(field, NA) for field in fields})
+            writer.writerow({key: f"{value:.6f}" if isinstance(value, float) else value
+                             for key, value in row.items()})
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Aggregate the four GB300 experiments.")
+    parser = argparse.ArgumentParser(description="Summarize three GB300 campaigns.")
     parser.add_argument("--campaign", action="append", type=Path, default=[])
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
+    if len(args.campaign) != 3:
+        parser.error("exactly three final campaigns are required")
     records = [read_campaign(path) for path in args.campaign]
-    validate_campaigns(records)
+    if len({record["metadata"]["campaign_id"] for record in records}) != 3:
+        raise ValueError("the three campaigns must be distinct")
+    if len({record["metadata"]["gpu"]["uuid"] for record in records}) != 1:
+        raise ValueError("all campaigns must use the same GPU")
+
     output = args.output if args.output.is_absolute() else ROOT / args.output
     output.mkdir(parents=True, exist_ok=False)
     figures = output / "figures"
     figures.mkdir()
-
-    processors = {
-        "memory_paths": (memory_results, memory_figure),
-        "umma_throughput": (umma_results, umma_figure),
-        "umma_device_scaling": (scaling_results, scaling_figure),
-        "gemm_comparison": (gemm_results, gemm_figure),
-    }
+    processors = {"memory_paths": (memory_results, memory_figure),
+                  "umma_throughput": (umma_results, umma_figure),
+                  "umma_device_scaling": (scaling_results, scaling_figure),
+                  "gemm_comparison": (gemm_results, gemm_figure)}
     summaries = {}
     for name, (analyze, figure) in processors.items():
         rows, summary = analyze(records)
-        write_csv(output / f"{name}.csv", FIELDS[name], rows)
+        write_csv(output / f"{name}.csv", rows)
         (figures / f"{name}.svg").write_text(figure(summary), encoding="utf-8")
         summaries[name] = summary
-
     document = {"campaign_ids": [record["metadata"]["campaign_id"] for record in records],
-                "campaign_count": CAMPAIGNS, "gpu": records[0]["metadata"]["gpu"],
-                "statistics": "median within each campaign; descriptive statistics across three campaigns",
-                "ncu_states": [record["metadata"].get("ncu", {}).get("state") for record in records],
-                "experiments": summaries}
+                "gpu": records[0]["metadata"]["gpu"], "experiments": summaries}
     (output / "summary.json").write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     print(f"analysis: COMPLETE {output}", file=sys.stderr)
 
