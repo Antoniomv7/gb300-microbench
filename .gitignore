@@ -1,14 +1,6 @@
 build/
 runs/
-# `make analyze` writes ANALYSIS_OUT (default results/new) and its .partial
-# staging directory inside the versioned results/ tree; both must stay
-# untracked or the next `make campaign` aborts on a dirty worktree.
-results/new/
-results/new.partial/
-# The supplementary UMMA device-scaling analysis writes here; like
-# results/new/ it must stay untracked so the next campaign does not abort
-# on a dirty worktree.
-results/umma_device_scaling/
+results/generated/
 __pycache__/
 *.py[cod]
 .DS_Store

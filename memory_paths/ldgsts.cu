@@ -1,6 +1,4 @@
-// LDGSTS global-to-shared-memory microbenchmark.
-// One 128-thread CTA runs per SM over stages {2,4,8} and 16/32/64 KiB in
-// flight. Correctness is checked before timing.
+// LDGSTS global-to-shared copy; validate before CUDA-event timing.
 
 #include <algorithm>
 #include <chrono>
@@ -17,11 +15,10 @@
 
 #include <cuda_runtime.h>
 
+#include "../benchmark_common.cuh"
+
 namespace {
 
-// ---------------------------------------------------------------------------
-// Frozen contract constants.
-// ---------------------------------------------------------------------------
 constexpr int kThreadsPerCta = 128;
 constexpr int kVectorBytes = 16;
 constexpr int kTargetMaxActiveCtasPerSm = 1;
@@ -32,12 +29,6 @@ constexpr uint64_t kPatternSalt = 0xD1B54A32D192ED03ULL;
 constexpr const char* kSchemaVersion = "1";
 constexpr const char* kMethodName = "ldgsts";
 
-// Self-test working set: a fixed, small multiple of the common-multiple
-// unit (sm_count * 32 KiB), independent of any user-supplied working set.
-// 8x gives 256 KiB/CTA, i.e. 8..128 tiles/CTA across all nine
-// specializations — enough to exercise pipeline fill/steady-state/drain.
-constexpr int64_t kSelfTestCommonMultiples = 8;
-
 int g_cleanup_failures = 0;
 
 enum class RunStatus {
@@ -45,15 +36,6 @@ enum class RunStatus {
     kMismatch,
     kCudaError,
 };
-
-const char* run_status_name(RunStatus status) {
-    switch (status) {
-        case RunStatus::kOk: return "PASS";
-        case RunStatus::kMismatch: return "MISMATCH";
-        case RunStatus::kCudaError: return "CUDA_ERROR";
-    }
-    return "UNKNOWN";
-}
 
 [[noreturn]] void fail(const char* fmt, ...) {
     std::va_list args;
@@ -65,11 +47,6 @@ const char* run_status_name(RunStatus status) {
     std::exit(1);
 }
 
-// ---------------------------------------------------------------------------
-// RAII CUDA resource wrappers. A CUDA_CHECK failure inside run_specialization
-// returns a distinct CUDA-error status through local wrappers, so every
-// allocation made so far is still released during ordinary stack unwind.
-// ---------------------------------------------------------------------------
 #define CUDA_CHECK(call)                                                    \
     do {                                                                    \
         cudaError_t err_ = (call);                                          \
@@ -136,13 +113,6 @@ class CudaEvent {
     bool created_ = false;
 };
 
-// ---------------------------------------------------------------------------
-// The nine frozen specializations, derived from the formulas (not
-// hand-copied from the table) so the formulas are the single source of
-// truth. The (stages, bif_kib) pairs enumerated below are exactly the
-// cartesian product of the frozen "Allowed stages" and "Bytes in flight per
-// SM" sets from the contract.
-// ---------------------------------------------------------------------------
 struct Specialization {
     int stages = 0;
     int bif_kib = 0;
@@ -178,15 +148,7 @@ const Specialization& find_spec(int stages, int bif_kib) {
     std::abort();  // unreachable; fail() does not return.
 }
 
-// ---------------------------------------------------------------------------
-// Device code: deterministic, index-verifiable pattern; init kernel; the
-// shared cp.async emission helper; validate and benchmark kernel templates.
-// ---------------------------------------------------------------------------
 
-// SplitMix64's finalizer uses all 64 input bits and is a permutation over
-// uint64_t. The first 64 bits of each vector therefore do not repeat before
-// the index itself wraps; the second independently salted mix fills the
-// remaining 64 bits. Validation never needs host-side source data.
 __device__ __forceinline__ uint64_t mix64(uint64_t value) {
     value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ULL;
     value = (value ^ (value >> 27)) * 0x94D049BB133111EBULL;
@@ -209,9 +171,6 @@ __global__ void init_pattern_kernel(uint4* __restrict__ g_src, int64_t total_vec
     }
 }
 
-// Issues COPIES 16-byte cp.async.cg.shared.global copies for one thread, one
-// pipeline stage. Shared by the validate and benchmark kernels below so both
-// execution paths emit their copies through the same helper.
 template <int COPIES>
 __device__ __forceinline__ void emit_stage_cp_async(
         const uint4* __restrict__ tile_src, unsigned char* __restrict__ slot, int tid) {
@@ -228,11 +187,7 @@ __device__ __forceinline__ void emit_stage_cp_async(
     }
 }
 
-// Correctness path: walks every tile once (no rotation needed — rotation
-// only permutes visit order within a pass, not the set of tiles visited),
-// verifies every copied 16-byte vector, and accumulates mismatches locally
-// before a single atomicAdd, so the working set never has to travel back to
-// the host.
+// Validate every copied vector against its deterministic source pattern.
 template <int STAGES, int COPIES>
 __global__ void ldgsts_validate_kernel(
         const uint4* __restrict__ g_src,
@@ -287,12 +242,7 @@ __global__ void ldgsts_validate_kernel(
     }
 }
 
-// Timed path: identical pipeline mechanics, but instead of comparing against
-// the expected pattern it XORs one 32-bit lane per thread into a tiny
-// per-thread sink buffer. The sink write is a minimal observable global
-// store that keeps the compiler from discarding the pipeline; its own
-// traffic (grid_blocks*128*4 bytes, independent of the working set) is never
-// counted toward useful_bytes/effective_gbps.
+// Match the TMA arm: one CTA per SM and the same in-flight byte grid.
 template <int STAGES, int COPIES>
 __global__ void ldgsts_benchmark_kernel(
         const uint4* __restrict__ g_src,
@@ -342,68 +292,32 @@ __global__ void ldgsts_benchmark_kernel(
     g_sink[static_cast<int64_t>(blockIdx.x) * kThreadsPerCta + tid] = sink_acc;
 }
 
-// ---------------------------------------------------------------------------
-// Host: device query, working-set planning, CSV, CLI, orchestration.
-// ---------------------------------------------------------------------------
 struct GpuInfo {
-    std::string name;
-    int major = 0;
-    int minor = 0;
     int sm_count = 0;
     int64_t l2_bytes = 0;
     int64_t smem_per_sm_bytes = 0;
     int64_t smem_optin_max_bytes = 0;
-    int driver_version = 0;
-    int runtime_version = 0;
 };
 
 GpuInfo query_gpu_info() {
-    int device_count = 0;
-    cudaError_t err = cudaGetDeviceCount(&device_count);
-    if (err != cudaSuccess) {
-        fail("cudaGetDeviceCount failed: %s (%s)", cudaGetErrorName(err), cudaGetErrorString(err));
-    }
-    if (device_count != 1) {
-        fail("expected exactly 1 visible CUDA device, found %d", device_count);
-    }
-    err = cudaSetDevice(0);
-    if (err != cudaSuccess) {
-        fail("cudaSetDevice(0) failed: %s (%s)", cudaGetErrorName(err), cudaGetErrorString(err));
-    }
-    cudaDeviceProp prop{};
-    err = cudaGetDeviceProperties(&prop, 0);
-    if (err != cudaSuccess) {
-        fail("cudaGetDeviceProperties failed: %s (%s)", cudaGetErrorName(err), cudaGetErrorString(err));
-    }
-    if (prop.major != 10 || prop.minor != 3) {
-        fail("expected compute capability 10.3, found %d.%d", prop.major, prop.minor);
-    }
+    const cudaDeviceProp prop = benchmark_device_properties();
     int optin = 0;
-    err = cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0);
+    const cudaError_t err = cudaDeviceGetAttribute(
+        &optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0);
     if (err != cudaSuccess) {
         fail("cudaDeviceGetAttribute(MaxSharedMemoryPerBlockOptin) failed: %s (%s)",
              cudaGetErrorName(err), cudaGetErrorString(err));
     }
-    int driver_version = 0, runtime_version = 0;
-    err = cudaDriverGetVersion(&driver_version);
-    if (err != cudaSuccess) fail("cudaDriverGetVersion failed: %s", cudaGetErrorName(err));
-    err = cudaRuntimeGetVersion(&runtime_version);
-    if (err != cudaSuccess) fail("cudaRuntimeGetVersion failed: %s", cudaGetErrorName(err));
 
     if (prop.multiProcessorCount <= 0) fail("invalid multiProcessorCount=%d", prop.multiProcessorCount);
     if (prop.l2CacheSize <= 0) fail("invalid l2CacheSize=%d", prop.l2CacheSize);
     if (prop.sharedMemPerMultiprocessor <= 0) fail("invalid sharedMemPerMultiprocessor");
 
     GpuInfo info;
-    info.name = prop.name;
-    info.major = prop.major;
-    info.minor = prop.minor;
     info.sm_count = prop.multiProcessorCount;
     info.l2_bytes = static_cast<int64_t>(prop.l2CacheSize);
     info.smem_per_sm_bytes = static_cast<int64_t>(prop.sharedMemPerMultiprocessor);
     info.smem_optin_max_bytes = static_cast<int64_t>(optin);
-    info.driver_version = driver_version;
-    info.runtime_version = runtime_version;
     return info;
 }
 
@@ -434,66 +348,8 @@ WorkingSetPlan plan_working_set(const GpuInfo& gpu, std::optional<int64_t> reque
     return plan;
 }
 
-WorkingSetPlan plan_self_test_working_set(const GpuInfo& gpu) {
-    const int64_t common_multiple = static_cast<int64_t>(gpu.sm_count) * 32 * 1024;
-    const int64_t working_set_bytes = common_multiple * kSelfTestCommonMultiples;
-    return {working_set_bytes, working_set_bytes, common_multiple};
-}
-
-std::string csv_quote(const std::string& s) {
-    std::string out = "\"";
-    for (char c : s) {
-        if (c == '"') out += "\"\"";
-        else out += c;
-    }
-    out += "\"";
-    return out;
-}
-
-std::string now_utc_iso8601() {
-    const std::time_t t = std::time(nullptr);
-    std::tm tm_utc{};
-    gmtime_r(&t, &tm_utc);
-    char buf[32];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_utc);
-    return std::string(buf);
-}
-
-std::string run_command_capture(const char* cmd) {
-    std::string result;
-    FILE* pipe = popen(cmd, "r");
-    if (!pipe) return "";
-    char buffer[256];
-    while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-    }
-    const int rc = pclose(pipe);
-    if (rc != 0) return "";
-    while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) result.pop_back();
-    return result;
-}
-
-std::string git_commit_hash() {
-    const std::string out = run_command_capture("git rev-parse HEAD 2>/dev/null");
-    return out.empty() ? "UNKNOWN" : out;
-}
-
-std::string git_dirty_flag() {
-    FILE* pipe = popen("git status --porcelain 2>/dev/null", "r");
-    if (!pipe) return "unknown";
-    char buffer[256];
-    bool any = false;
-    while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        any = true;
-    }
-    const int rc = pclose(pipe);
-    if (rc != 0) return "unknown";
-    return any ? "true" : "false";
-}
-
 struct CliConfig {
     bool help = false;
-    bool self_test = false;
     bool has_stages = false;
     int stages = 0;
     bool has_bif = false;
@@ -512,52 +368,9 @@ struct CliConfig {
 
 void print_usage(std::FILE* out) {
     std::fprintf(out,
-        "ldgsts - standalone LDGSTS (cp.async) global-memory->SMEM copy microbenchmark\n"
-        "\n"
-        "LDGSTS arm of the LDGSTS vs TMA experiment. Measures the effective copy\n"
-        "bandwidth of a vectorized cp.async.cg.shared.global software pipeline\n"
-        "(16-byte copies, one ring of pipeline stages). Not TMA, not DRAM/HBM\n"
-        "bandwidth, not a final benchmark result.\n"
-        "\n"
-        "Usage:\n"
-        "  ldgsts --self-test\n"
-        "  ldgsts --stages {2,4,8} --bytes-in-flight-kib {16,32,64} --run-kind {smoke,benchmark}\n"
-        "         [--working-set-mib N] [--passes N] [--warmup-ms N] [--repetitions N]\n"
-        "\n"
-        "Options:\n"
-        "  --stages {2,4,8}                Ring buffer depth (pipeline stages). Required.\n"
-        "  --bytes-in-flight-kib {16,32,64} Bytes in flight per SM. Required.\n"
-        "  --working-set-mib N              Requested working set in MiB, in [1, 1048576].\n"
-        "                                   Rounded up to a common multiple of\n"
-        "                                   sm_count*32KiB. Default: at least 4x the\n"
-        "                                   queried L2 cache size.\n"
-        "  --passes N                       Full working-set traversals per measured\n"
-        "                                   kernel launch, in [1, 1000000]. Default: 1.\n"
-        "  --warmup-ms N                    Minimum warm-up time in ms before timed\n"
-        "                                   repetitions begin, in [0, 3600000]. Default: 0.\n"
-        "  --repetitions N                  Separately timed kernel launches, in\n"
-        "                                   [1, 1000000]. Default: 1.\n"
-        "  --run-kind {smoke,benchmark}     'benchmark' requires working_set_bytes > 2xL2.\n"
-        "                                   'smoke' has no such requirement and its output\n"
-        "                                   is never a final experimental result. Required.\n"
-        "  --self-test                      Validate all nine specializations on a small\n"
-        "                                   fixed working set and exit; no CSV, no timing.\n"
-        "                                   Cannot be combined with the flags above.\n"
-        "  --help                           Show this help and exit.\n"
-        "\n"
-        "On a --stages/--bytes-in-flight-kib/--run-kind run, stdout carries only CSV (one\n"
-        "header line plus one row per repetition); diagnostics, progress, and errors go to\n"
-        "stderr. See README.md for the CSV schema and units.\n");
-}
-
-bool parse_int_arg(const std::string& s, int64_t* out) {
-    if (s.empty()) return false;
-    errno = 0;
-    char* endptr = nullptr;
-    const long long v = std::strtoll(s.c_str(), &endptr, 10);
-    if (errno != 0 || endptr == s.c_str() || *endptr != '\0') return false;
-    *out = static_cast<int64_t>(v);
-    return true;
+        "Usage: ldgsts --stages {2,4,8} --bytes-in-flight-kib {16,32,64}\n"
+        "       --run-kind {smoke,benchmark} [--working-set-mib N] [--passes N]\n"
+        "       [--warmup-ms N] [--repetitions N]\n");
 }
 
 bool parse_cli(int argc, char** argv, CliConfig* cfg, std::string* err) {
@@ -570,10 +383,6 @@ bool parse_cli(int argc, char** argv, CliConfig* cfg, std::string* err) {
 
         if (arg == "--help" || arg == "-h") {
             cfg->help = true;
-            continue;
-        }
-        if (arg == "--self-test") {
-            cfg->self_test = true;
             continue;
         }
         if (arg == "--stages") {
@@ -658,18 +467,9 @@ bool parse_cli(int argc, char** argv, CliConfig* cfg, std::string* err) {
 
     if (cfg->help) return true;
 
-    if (cfg->self_test) {
-        if (cfg->has_stages || cfg->has_bif || cfg->has_working_set_mib || cfg->has_passes ||
-            cfg->has_warmup_ms || cfg->has_repetitions || cfg->has_run_kind) {
-            *err = "--self-test cannot be combined with benchmark options";
-            return false;
-        }
-        return true;
-    }
-
-    if (!cfg->has_stages) { *err = "--stages is required (unless --self-test)"; return false; }
-    if (!cfg->has_bif) { *err = "--bytes-in-flight-kib is required (unless --self-test)"; return false; }
-    if (!cfg->has_run_kind) { *err = "--run-kind is required (unless --self-test)"; return false; }
+    if (!cfg->has_stages) { *err = "--stages is required"; return false; }
+    if (!cfg->has_bif) { *err = "--bytes-in-flight-kib is required"; return false; }
+    if (!cfg->has_run_kind) { *err = "--run-kind is required"; return false; }
     return true;
 }
 
@@ -692,13 +492,6 @@ struct CsvRow {
     double effective_gbps = 0.0;
     std::string correctness;
     unsigned long long mismatches = 0;
-    std::string gpu_name;
-    std::string gpu_uuid;
-    std::string compute_capability;
-    int cuda_driver_version = 0;
-    int cuda_runtime_version = 0;
-    std::string git_commit;
-    std::string git_dirty;
 };
 
 void print_csv_header() {
@@ -709,9 +502,7 @@ void print_csv_header() {
         "threads_per_cta,target_ctas_per_sm,occupancy_ctas_per_sm,grid_blocks,"
         "sm_count,smem_reservation_bytes,l2_bytes,requested_working_set_bytes,"
         "working_set_bytes,working_set_l2_ratio,passes,useful_bytes,warmup_ms,"
-        "kernel_time_ms,effective_gbps,correctness,mismatches,gpu_name,gpu_uuid,"
-        "compute_capability,cuda_driver_version,cuda_runtime_version,git_commit,"
-        "git_dirty\n");
+        "kernel_time_ms,effective_gbps,correctness,mismatches\n");
 }
 
 void print_csv_row(const CsvRow& r) {
@@ -730,28 +521,16 @@ void print_csv_row(const CsvRow& r) {
         << r.l2_bytes << ',' << r.requested_working_set_bytes << ',' << r.working_set_bytes << ','
         << working_set_l2_ratio << ',' << r.passes << ',' << r.useful_bytes << ',' << r.warmup_ms
         << ',' << r.kernel_time_ms << ',' << r.effective_gbps << ',' << r.correctness << ','
-        << r.mismatches << ',' << csv_quote(r.gpu_name) << ',' << r.gpu_uuid << ','
-        << r.compute_capability << ',' << r.cuda_driver_version << ',' << r.cuda_runtime_version
-        << ',' << r.git_commit << ',' << r.git_dirty << '\n';
+        << r.mismatches << '\n';
     std::fputs(oss.str().c_str(), stdout);
 }
 
-// Runs one (STAGES, COPIES) specialization: computes and verifies the
-// max-active-CTAs/SM=1 shared-memory reservation, allocates and initializes
-// the working set, validates correctness, and — only if validation passed
-// and the caller asked for it — runs warm-up plus timed repetitions, printing
-// one CSV row per repetition. Mismatches and CUDA failures remain distinct.
 template <int STAGES, int COPIES>
 RunStatus run_specialization(
         const GpuInfo& gpu,
         const Specialization& spec,
         const WorkingSetPlan& ws,
         const CliConfig& cli,
-        bool benchmark_after_validate,
-        bool print_header,
-        const std::string& git_commit,
-        const std::string& git_dirty,
-        const std::string& gpu_uuid,
         uint64_t* out_mismatches) {
     static_assert(STAGES == 2 || STAGES == 4 || STAGES == 8, "invalid STAGES");
     if (out_mismatches) *out_mismatches = 0;
@@ -766,11 +545,6 @@ RunStatus run_specialization(
              (long long)per_cta_bytes, (long long)spec.stage_bytes);
     }
 
-    // Shared-memory reservation: strictly more than half of
-    // sharedMemPerMultiprocessor (so the resource limit permits at most one
-    // active CTA per SM) and at least bytes_in_flight_per_sm, aligned to
-    // kSmemAlignmentBytes and capped at the max opt-in value. This is a
-    // residency limit, not an observation of runtime block placement.
     int64_t half_plus = (gpu.smem_per_sm_bytes / 2) + 1;
     half_plus = round_up_to_multiple(half_plus, kSmemAlignmentBytes);
     const int64_t bif_aligned = round_up_to_multiple(spec.bytes_in_flight_per_sm, kSmemAlignmentBytes);
@@ -837,7 +611,6 @@ RunStatus run_specialization(
     const bool validate_ok = (h_mismatch == 0);
 
     if (!validate_ok) return RunStatus::kMismatch;
-    if (!benchmark_after_validate) return RunStatus::kOk;
 
     DeviceBuffer<uint32_t> d_sink("sink");
     CUDA_CHECK(d_sink.allocate(static_cast<size_t>(grid_blocks) * kThreadsPerCta));
@@ -856,7 +629,7 @@ RunStatus run_specialization(
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 
-    if (print_header) print_csv_header();
+    print_csv_header();
 
     const int64_t useful_bytes = ws.working_set_bytes * cli.passes;
 
@@ -897,13 +670,6 @@ RunStatus run_specialization(
         row.effective_gbps = effective_gbps;
         row.correctness = "OK";
         row.mismatches = h_mismatch;
-        row.gpu_name = gpu.name;
-        row.gpu_uuid = gpu_uuid;
-        row.compute_capability = std::to_string(gpu.major) + "." + std::to_string(gpu.minor);
-        row.cuda_driver_version = gpu.driver_version;
-        row.cuda_runtime_version = gpu.runtime_version;
-        row.git_commit = git_commit;
-        row.git_dirty = git_dirty;
         print_csv_row(row);
     }
 
@@ -912,67 +678,27 @@ RunStatus run_specialization(
 
 RunStatus dispatch_run(int stages, int bif_kib, const GpuInfo& gpu,
                        const Specialization& spec, const WorkingSetPlan& ws,
-                       const CliConfig& cli, bool benchmark_after_validate,
-                       bool print_header, const std::string& git_commit,
-                       const std::string& git_dirty, const std::string& gpu_uuid,
-                       uint64_t* out_mismatches) {
+                       const CliConfig& cli, uint64_t* out_mismatches) {
     if (stages == 2 && bif_kib == 16)
-        return run_specialization<2, 4>(gpu, spec, ws, cli, benchmark_after_validate, print_header,
-                                         git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<2, 4>(gpu, spec, ws, cli, out_mismatches);
     if (stages == 2 && bif_kib == 32)
-        return run_specialization<2, 8>(gpu, spec, ws, cli, benchmark_after_validate, print_header,
-                                         git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<2, 8>(gpu, spec, ws, cli, out_mismatches);
     if (stages == 2 && bif_kib == 64)
-        return run_specialization<2, 16>(gpu, spec, ws, cli, benchmark_after_validate, print_header,
-                                          git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<2, 16>(gpu, spec, ws, cli, out_mismatches);
     if (stages == 4 && bif_kib == 16)
-        return run_specialization<4, 2>(gpu, spec, ws, cli, benchmark_after_validate, print_header,
-                                         git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<4, 2>(gpu, spec, ws, cli, out_mismatches);
     if (stages == 4 && bif_kib == 32)
-        return run_specialization<4, 4>(gpu, spec, ws, cli, benchmark_after_validate, print_header,
-                                         git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<4, 4>(gpu, spec, ws, cli, out_mismatches);
     if (stages == 4 && bif_kib == 64)
-        return run_specialization<4, 8>(gpu, spec, ws, cli, benchmark_after_validate, print_header,
-                                         git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<4, 8>(gpu, spec, ws, cli, out_mismatches);
     if (stages == 8 && bif_kib == 16)
-        return run_specialization<8, 1>(gpu, spec, ws, cli, benchmark_after_validate, print_header,
-                                         git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<8, 1>(gpu, spec, ws, cli, out_mismatches);
     if (stages == 8 && bif_kib == 32)
-        return run_specialization<8, 2>(gpu, spec, ws, cli, benchmark_after_validate, print_header,
-                                         git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<8, 2>(gpu, spec, ws, cli, out_mismatches);
     if (stages == 8 && bif_kib == 64)
-        return run_specialization<8, 4>(gpu, spec, ws, cli, benchmark_after_validate, print_header,
-                                         git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<8, 4>(gpu, spec, ws, cli, out_mismatches);
     fail("internal error: no specialization for stages=%d bytes_in_flight_kib=%d", stages, bif_kib);
     std::abort();  // unreachable; fail() does not return.
-}
-
-RunStatus run_self_test(const GpuInfo& gpu) {
-    std::fprintf(stderr, "ldgsts: SELF_TEST start\n");
-    const WorkingSetPlan ws = plan_self_test_working_set(gpu);
-    std::fprintf(stderr, "ldgsts: SELF_TEST working_set_bytes=%lld sm_count=%d\n",
-                 (long long)ws.working_set_bytes, gpu.sm_count);
-    const CliConfig dummy;
-    RunStatus overall_status = RunStatus::kOk;
-    for (const auto& spec : kSpecializations) {
-        uint64_t mismatches = 0;
-        const RunStatus status = dispatch_run(
-            spec.stages, spec.bif_kib, gpu, spec, ws, dummy,
-            /*benchmark_after_validate=*/false, /*print_header=*/false,
-            "", "", "", &mismatches);
-        std::fprintf(stderr,
-            "ldgsts: SELF_TEST stages=%d bytes_in_flight_kib=%d stage_bytes=%lld "
-            "copies_per_thread_per_stage=%d result=%s mismatches=%llu\n",
-            spec.stages, spec.bif_kib, (long long)spec.stage_bytes, spec.copies_per_thread,
-            run_status_name(status), (unsigned long long)mismatches);
-        if (status == RunStatus::kCudaError) {
-            std::fprintf(stderr, "ldgsts: SELF_TEST_RESULT=CUDA_ERROR\n");
-            return status;
-        }
-        if (status == RunStatus::kMismatch) overall_status = status;
-    }
-    std::fprintf(stderr, "ldgsts: SELF_TEST_RESULT=%s\n", run_status_name(overall_status));
-    return overall_status;
 }
 
 }  // namespace
@@ -990,69 +716,19 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // No CUDA calls above this point, so --help and argument-validation
-    // errors work in a GPU-less environment (e.g. inside the build
-    // container during static/CLI checks).
     const GpuInfo gpu = query_gpu_info();
+    const Specialization& spec = find_spec(cli.stages, cli.bif_kib);
+    const WorkingSetPlan ws = plan_working_set(
+        gpu, cli.has_working_set_mib ? std::optional<int64_t>(cli.working_set_mib) : std::nullopt);
+    if (cli.run_kind == "benchmark" && ws.working_set_bytes <= 2 * gpu.l2_bytes)
+        fail("working set must exceed twice the L2 cache size");
 
-    const char* uuid_env = std::getenv("EXPECTED_GPU_UUID");
-    if (uuid_env == nullptr || uuid_env[0] == '\0') {
-        fail("EXPECTED_GPU_UUID is not set; run this binary only via scripts/run_gpu.sh");
+    uint64_t mismatches = 0;
+    const RunStatus status = dispatch_run(cli.stages, cli.bif_kib, gpu, spec, ws, cli, &mismatches);
+    if (status != RunStatus::kOk || g_cleanup_failures != 0) {
+        std::fprintf(stderr, "ldgsts: measurement failed; mismatches=%llu cleanup_errors=%d\n",
+                     static_cast<unsigned long long>(mismatches), g_cleanup_failures);
+        return 1;
     }
-    const std::string gpu_uuid(uuid_env);
-
-    int overall_rc = 0;
-
-    if (cli.self_test) {
-        overall_rc = run_self_test(gpu) == RunStatus::kOk ? 0 : 1;
-    } else {
-        const Specialization& spec = find_spec(cli.stages, cli.bif_kib);
-        const WorkingSetPlan ws = plan_working_set(
-            gpu, cli.has_working_set_mib ? std::optional<int64_t>(cli.working_set_mib) : std::nullopt);
-
-        std::fprintf(stderr,
-            "ldgsts: run_kind=%s stages=%d bytes_in_flight_kib=%d "
-            "requested_working_set_bytes=%lld working_set_bytes=%lld l2_bytes=%lld "
-            "common_multiple_bytes=%lld\n",
-            cli.run_kind.c_str(), cli.stages, cli.bif_kib, (long long)ws.requested_bytes,
-            (long long)ws.working_set_bytes, (long long)gpu.l2_bytes,
-            (long long)ws.common_multiple_bytes);
-
-        if (cli.run_kind == "benchmark" && ws.working_set_bytes <= 2 * gpu.l2_bytes) {
-            fail("working_set_bytes=%lld is not strictly greater than 2xL2 (%lld); increase "
-                 "--working-set-mib for a benchmark run",
-                 (long long)ws.working_set_bytes, (long long)(2 * gpu.l2_bytes));
-        }
-
-        const std::string git_commit_str = git_commit_hash();
-        const std::string git_dirty_str = git_dirty_flag();
-
-        uint64_t mismatches = 0;
-        const RunStatus status = dispatch_run(
-            cli.stages, cli.bif_kib, gpu, spec, ws, cli,
-            /*benchmark_after_validate=*/true, /*print_header=*/true,
-            git_commit_str, git_dirty_str, gpu_uuid, &mismatches);
-        if (status == RunStatus::kMismatch) {
-            std::fprintf(stderr,
-                "ldgsts: ERROR: correctness validation FAILED for stages=%d "
-                "bytes_in_flight_kib=%d mismatches=%llu; no benchmark was run\n",
-                cli.stages, cli.bif_kib, (unsigned long long)mismatches);
-            overall_rc = 1;
-        } else if (status == RunStatus::kCudaError) {
-            std::fprintf(stderr,
-                "ldgsts: ERROR: execution aborted by a CUDA error for stages=%d "
-                "bytes_in_flight_kib=%d; discard any partial CSV output\n",
-                cli.stages, cli.bif_kib);
-            overall_rc = 1;
-        } else {
-            std::fprintf(stderr, "ldgsts: correctness=OK mismatches=0; benchmark complete\n");
-        }
-    }
-
-    if (g_cleanup_failures != 0) {
-        std::fprintf(stderr, "ldgsts: ERROR: %d resource cleanup failure(s) occurred\n",
-                     g_cleanup_failures);
-        overall_rc = 1;
-    }
-    return overall_rc;
+    return 0;
 }

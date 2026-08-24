@@ -1,6 +1,4 @@
-// Two-dimensional unicast TMA global-to-shared-memory microbenchmark.
-// It uses the same grid and pipeline sweep as LDGSTS, with mbarrier completion.
-// Correctness is checked before timing.
+// TMA global-to-shared copy; validate before CUDA-event timing.
 
 #include <algorithm>
 #include <chrono>
@@ -16,15 +14,13 @@
 #include <string>
 
 #include <cuda_runtime.h>
-#include <cudaTypedefs.h>  // PFN_cuTensorMapEncodeTiled_v12000; pulls in cuda.h for CUtensorMap.
-#include <cuda/ptx>        // cuda::ptx:: low-level PTX wrappers (mbarrier, TMA, elect_sync).
+#include <cudaTypedefs.h>
+#include <cuda/ptx>
+
+#include "../benchmark_common.cuh"
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// Frozen contract constants (identical values to the LDGSTS arm's frozen
-// contract so the two arms remain directly comparable).
-// ---------------------------------------------------------------------------
 constexpr int kThreadsPerCta = 128;
 constexpr int kVectorBytes = 16;
 constexpr int kTargetMaxActiveCtasPerSm = 1;
@@ -35,15 +31,6 @@ constexpr uint64_t kPatternSalt = 0xD1B54A32D192ED03ULL;
 constexpr const char* kSchemaVersion = "1";
 constexpr const char* kMethodName = "tma";
 
-// Self-test working set: a fixed, small multiple of the common-multiple unit
-// (sm_count * 32 KiB), independent of any user-supplied working set. Matches
-// the LDGSTS arm's self-test sizing exactly.
-constexpr int64_t kSelfTestCommonMultiples = 8;
-
-// The CUDA version requested from cudaGetDriverEntryPointByVersion for
-// cuTensorMapEncodeTiled. cudaTypedefs.h ties the base (non-Im2col) tiled
-// encode signature we use to the v12000 typedef, so 12000 is the correct
-// version to request regardless of the pinned CUDA 13.1 toolkit.
 constexpr unsigned int kTensorMapEncodeTiledVersion = 12000;
 
 int g_cleanup_failures = 0;
@@ -53,15 +40,6 @@ enum class RunStatus {
     kMismatch,
     kCudaError,
 };
-
-const char* run_status_name(RunStatus status) {
-    switch (status) {
-        case RunStatus::kOk: return "PASS";
-        case RunStatus::kMismatch: return "MISMATCH";
-        case RunStatus::kCudaError: return "CUDA_ERROR";
-    }
-    return "UNKNOWN";
-}
 
 [[noreturn]] void fail(const char* fmt, ...) {
     std::va_list args;
@@ -73,12 +51,6 @@ const char* run_status_name(RunStatus status) {
     std::exit(1);
 }
 
-// ---------------------------------------------------------------------------
-// RAII CUDA resource wrappers. A CUDA_CHECK/TENSORMAP_CHECK failure inside
-// run_specialization returns a distinct CUDA-error status through local
-// wrappers, so every allocation made so far is still released during
-// ordinary stack unwind.
-// ---------------------------------------------------------------------------
 #define CUDA_CHECK(call)                                                    \
     do {                                                                    \
         cudaError_t err_ = (call);                                          \
@@ -157,23 +129,6 @@ class CudaEvent {
     bool created_ = false;
 };
 
-// ---------------------------------------------------------------------------
-// Shared compile-time geometry helpers: the single source of truth for the
-// stage_bytes -> tile_height relationship. Every geometry-dependent
-// computation in this file (the host-side Specialization table, both kernel
-// templates' tile height and shared-memory layout, the TMA descriptor's
-// boxDim[1], the TMA Y-coordinate stride, the expected-source-index
-// computation, and the dispatch-time runtime consistency check below) calls
-// through these two functions instead of recomputing the relationship
-// independently. A previous version of this file computed the device-side
-// tile height as COPIES * (kTileWidthBytes / kVectorBytes) (= 16 * COPIES),
-// which silently diverged from the correct stage_bytes / kTileWidthBytes
-// (= 8 * COPIES): the TMA Y-coordinate then advanced twice as far per tile
-// as the descriptor's boxDim[1] actually covered, leaving every tile after
-// the first out of alignment with the linear index validation expects.
-// Funneling every use through compute_stage_bytes()/compute_tile_height(),
-// plus the static_asserts immediately below, makes that class of bug fail to
-// compile if reintroduced.
 __host__ __device__ constexpr int64_t compute_stage_bytes(int copies) {
     return static_cast<int64_t>(kThreadsPerCta) * static_cast<int64_t>(copies) * kVectorBytes;
 }
@@ -182,11 +137,6 @@ __host__ __device__ constexpr int64_t compute_tile_height(int64_t stage_bytes) {
     return stage_bytes / kTileWidthBytes;
 }
 
-// Every distinct COPIES value used across the nine frozen specializations
-// (1, 2, 4, 8, 16) must produce tile_height = 8 * COPIES. These literals are
-// independent of compute_tile_height()'s implementation, so a regression
-// that reintroduces the old 16*COPIES formula (or any other divergence)
-// fails to compile rather than silently producing wrong SASS.
 static_assert(compute_tile_height(compute_stage_bytes(1)) == 8,
               "COPIES=1 must yield tile_height=8 (stage_bytes/256)");
 static_assert(compute_tile_height(compute_stage_bytes(2)) == 16,
@@ -198,12 +148,6 @@ static_assert(compute_tile_height(compute_stage_bytes(8)) == 64,
 static_assert(compute_tile_height(compute_stage_bytes(16)) == 128,
               "COPIES=16 must yield tile_height=128 (stage_bytes/256)");
 
-// ---------------------------------------------------------------------------
-// The nine frozen specializations, derived from the formulas (not
-// hand-copied from the table) so the formulas are the single source of
-// truth. Identical formulas to the LDGSTS arm's make_spec(); duplicated
-// rather than shared so this file stays standalone.
-// ---------------------------------------------------------------------------
 struct Specialization {
     int stages = 0;
     int bif_kib = 0;
@@ -230,12 +174,6 @@ constexpr Specialization kSpecializations[9] = {
     make_spec(8, 16), make_spec(8, 32), make_spec(8, 64),
 };
 
-// Whole-table regression gate: cross-checks the formula-derived
-// kSpecializations against literal expected values transcribed from the
-// frozen nine-specialization contract table, independently of
-// compute_tile_height()'s own implementation. This fails to compile if the
-// formulas above ever regress for any (stages, bif_kib) pair, not just the
-// five distinct COPIES values checked above.
 constexpr bool geometry_table_is_correct() {
     struct Expected {
         int stages;
@@ -272,19 +210,7 @@ const Specialization& find_spec(int stages, int bif_kib) {
     std::abort();  // unreachable; fail() does not return.
 }
 
-// ---------------------------------------------------------------------------
-// Device code: deterministic, index-verifiable pattern (identical formula to
-// the LDGSTS arm, duplicated for the same standalone-file reason); init kernel; TMA
-// issue/wait/init helpers shared by the validate and benchmark kernels;
-// validate and benchmark kernel templates.
-// ---------------------------------------------------------------------------
 
-// SplitMix64's finalizer uses all 64 input bits and is a permutation over
-// uint64_t. The first 64 bits of each vector therefore do not repeat before
-// the index itself wraps; the second independently salted mix fills the
-// remaining 64 bits. Validation never needs host-side source data. TMA moves
-// these bytes opaquely (UINT16 storage, no arithmetic), so the bytes landing
-// in shared memory are bit-identical to what the LDGSTS arm validates.
 __device__ __forceinline__ uint64_t mix64(uint64_t value) {
     value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ULL;
     value = (value ^ (value >> 27)) * 0x94D049BB133111EBULL;
@@ -307,10 +233,6 @@ __global__ void init_pattern_kernel(uint4* __restrict__ g_src, int64_t total_vec
     }
 }
 
-// Elects exactly one leader thread in warp 0 (global threads 0..31) using
-// the documented elect.sync pattern. Threads outside warp 0 never execute
-// elect_sync at all (elect.sync is a per-warp collective: calling it from
-// every warp would elect one leader per warp, not one leader per CTA).
 __device__ __forceinline__ bool tma_elect_leader() {
     bool is_leader = false;
     if (threadIdx.x < 32) {
@@ -319,11 +241,6 @@ __device__ __forceinline__ bool tma_elect_leader() {
     return is_leader;
 }
 
-// Initializes STAGES distinct mbarriers (one arrival expected per barrier —
-// the elected leader is the only thread that ever arrives on them) and
-// issues the fence required before the async (TMA) proxy may observe them.
-// Thread 0 always exists and is deterministic, unlike the elected leader, so
-// initialization is anchored to it.
 template <int STAGES>
 __device__ __forceinline__ void tma_init_barriers(uint64_t* bars) {
     if (threadIdx.x == 0) {
@@ -336,14 +253,6 @@ __device__ __forceinline__ void tma_init_barriers(uint64_t* bars) {
     __syncthreads();
 }
 
-// Issues one 2D unicast TMA tile transfer of exactly stage_bytes, with
-// correct transaction-byte accounting: the leader both arrives on the
-// barrier (satisfying its single expected arrival) and registers the
-// expected transaction byte count before issuing the copy, so the barrier's
-// phase only completes once the async engine's own completion signal
-// (cp.async.bulk.tensor's mbarrier::complete_tx::bytes) has landed exactly
-// stage_bytes bytes in shared memory. Shared verbatim by the validate and
-// benchmark kernels so the timed data-movement path is the one validated.
 __device__ __forceinline__ void tma_issue_stage(
         bool is_leader, unsigned char* dst_slot, const CUtensorMap* tensor_map,
         int32_t coord_y, uint64_t* bar, uint32_t stage_bytes) {
@@ -356,24 +265,12 @@ __device__ __forceinline__ void tma_issue_stage(
     }
 }
 
-// Waits for one ring slot's mbarrier to complete its current phase using an
-// explicit per-slot phase parity (mbarrier.try_wait.parity), then flips that
-// slot's tracked parity for its next reuse. Every thread calls this
-// independently on the same shared mbarrier: a successful wait on any thread
-// already guarantees full visibility of the TMA-written bytes to that
-// thread, which is the entire purpose of mbarrier::complete_tx::bytes.
 __device__ __forceinline__ void tma_wait_stage(uint64_t* bar, uint32_t& parity) {
     while (!cuda::ptx::mbarrier_try_wait_parity(bar, parity)) {
     }
     parity ^= 1u;
 }
 
-// Invalidates one mbarrier object, ending its lifetime. cuda::ptx does not
-// (as of the CUDA 13.1 CCCL headers) expose a dedicated mbarrier_inval()
-// wrapper, so this uses the exact inline-PTX idiom CUDA's own cuda::barrier
-// destructor emits for the equivalent shared-memory object
-// (cuda/__barrier/barrier_block_scope.h: mbarrier.inval.shared.b64 [addr]),
-// which is the documented mechanism in the PTX ISA's mbarrier chapter.
 __device__ __forceinline__ void tma_invalidate_barrier(uint64_t* bar) {
     asm volatile("mbarrier.inval.shared.b64 [%0];"
                  :
@@ -381,16 +278,6 @@ __device__ __forceinline__ void tma_invalidate_barrier(uint64_t* bar) {
                  : "memory");
 }
 
-// Invalidates every one of this CTA's STAGES mbarriers. Callers must only
-// invoke this after every outstanding TMA transaction on every stage has
-// completed and every consumer has finished reading its payload (i.e. after
-// the pipeline's drain loop and its synchronizing __syncthreads()), so that
-// invalidation never races a pending transaction. Only the same
-// compiler-recognized elected thread that issues TMA transfers performs the
-// invalidation, mirroring the issue path; the trailing __syncthreads()
-// makes the invalidation visible to every thread before kernel exit, so the
-// mbarrier objects' lifetime is unambiguous. Shared verbatim by the
-// validation and benchmark kernels.
 template <int STAGES>
 __device__ __forceinline__ void tma_invalidate_barriers(bool is_leader, uint64_t* bars) {
     if (is_leader) {
@@ -402,14 +289,7 @@ __device__ __forceinline__ void tma_invalidate_barriers(bool is_leader, uint64_t
     __syncthreads();
 }
 
-// Correctness path: walks every tile once (no rotation needed — rotation
-// only permutes visit order within a pass, not the set of tiles visited),
-// verifies every copied 16-byte vector, and accumulates mismatches locally
-// before a single atomicAdd, so the working set never has to travel back to
-// the host. Pipeline shape: fill distinct ring slots before the first wait,
-// wait for the oldest slot, consume it, synchronize all consumers before
-// reusing that slot, refill the freed slot on the next iteration, and drain
-// every outstanding stage after the main loop.
+// Validate TMA tiles against the same source pattern used by LDGSTS.
 template <int STAGES, int COPIES>
 __global__ void tma_validate_kernel(
         const __grid_constant__ CUtensorMap tensor_map,
@@ -478,9 +358,6 @@ __global__ void tma_validate_kernel(
     }
     __syncthreads();
 
-    // Every stage has been waited on and consumed above, so no TMA
-    // transaction is outstanding on any of this CTA's STAGES mbarriers;
-    // invalidate them all before kernel exit.
     tma_invalidate_barriers<STAGES>(is_leader, bars);
 
     if (local_mismatches != 0) {
@@ -488,13 +365,7 @@ __global__ void tma_validate_kernel(
     }
 }
 
-// Timed path: identical pipeline mechanics (same tma_issue_stage /
-// tma_wait_stage helpers as the validate kernel above), but instead of
-// comparing against the expected pattern it XORs one 32-bit lane per thread
-// into a tiny per-thread sink buffer. The sink write is a minimal observable
-// global store that keeps the compiler from discarding the pipeline; its own
-// traffic (grid_blocks*128*4 bytes, independent of the working set) is never
-// counted toward useful_bytes/effective_gbps.
+// Match LDGSTS occupancy, working set and in-flight byte configurations.
 template <int STAGES, int COPIES>
 __global__ void tma_benchmark_kernel(
         const __grid_constant__ CUtensorMap tensor_map,
@@ -559,87 +430,40 @@ __global__ void tma_benchmark_kernel(
         __syncthreads();
     }
 
-    // All passes are complete, so every stage has been waited on and
-    // consumed and no TMA transaction is outstanding on any of this CTA's
-    // STAGES mbarriers; invalidate them all before kernel exit.
     tma_invalidate_barriers<STAGES>(is_leader, bars);
 
     g_sink[static_cast<int64_t>(blockIdx.x) * kThreadsPerCta + tid] = sink_acc;
 }
 
-// ---------------------------------------------------------------------------
-// Host: device query, tensor map descriptor construction, working-set
-// planning, CSV, CLI, orchestration.
-// ---------------------------------------------------------------------------
 struct GpuInfo {
-    std::string name;
-    int major = 0;
-    int minor = 0;
     int sm_count = 0;
     int64_t l2_bytes = 0;
     int64_t smem_per_sm_bytes = 0;
     int64_t smem_optin_max_bytes = 0;
-    int driver_version = 0;
-    int runtime_version = 0;
 };
 
 GpuInfo query_gpu_info() {
-    int device_count = 0;
-    cudaError_t err = cudaGetDeviceCount(&device_count);
-    if (err != cudaSuccess) {
-        fail("cudaGetDeviceCount failed: %s (%s)", cudaGetErrorName(err), cudaGetErrorString(err));
-    }
-    if (device_count != 1) {
-        fail("expected exactly 1 visible CUDA device, found %d", device_count);
-    }
-    err = cudaSetDevice(0);
-    if (err != cudaSuccess) {
-        fail("cudaSetDevice(0) failed: %s (%s)", cudaGetErrorName(err), cudaGetErrorString(err));
-    }
-    cudaDeviceProp prop{};
-    err = cudaGetDeviceProperties(&prop, 0);
-    if (err != cudaSuccess) {
-        fail("cudaGetDeviceProperties failed: %s (%s)", cudaGetErrorName(err), cudaGetErrorString(err));
-    }
-    if (prop.major != 10 || prop.minor != 3) {
-        fail("expected compute capability 10.3, found %d.%d", prop.major, prop.minor);
-    }
+    const cudaDeviceProp prop = benchmark_device_properties();
     int optin = 0;
-    err = cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0);
+    const cudaError_t err = cudaDeviceGetAttribute(
+        &optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0);
     if (err != cudaSuccess) {
         fail("cudaDeviceGetAttribute(MaxSharedMemoryPerBlockOptin) failed: %s (%s)",
              cudaGetErrorName(err), cudaGetErrorString(err));
     }
-    int driver_version = 0, runtime_version = 0;
-    err = cudaDriverGetVersion(&driver_version);
-    if (err != cudaSuccess) fail("cudaDriverGetVersion failed: %s", cudaGetErrorName(err));
-    err = cudaRuntimeGetVersion(&runtime_version);
-    if (err != cudaSuccess) fail("cudaRuntimeGetVersion failed: %s", cudaGetErrorName(err));
 
     if (prop.multiProcessorCount <= 0) fail("invalid multiProcessorCount=%d", prop.multiProcessorCount);
     if (prop.l2CacheSize <= 0) fail("invalid l2CacheSize=%d", prop.l2CacheSize);
     if (prop.sharedMemPerMultiprocessor <= 0) fail("invalid sharedMemPerMultiprocessor");
 
     GpuInfo info;
-    info.name = prop.name;
-    info.major = prop.major;
-    info.minor = prop.minor;
     info.sm_count = prop.multiProcessorCount;
     info.l2_bytes = static_cast<int64_t>(prop.l2CacheSize);
     info.smem_per_sm_bytes = static_cast<int64_t>(prop.sharedMemPerMultiprocessor);
     info.smem_optin_max_bytes = static_cast<int64_t>(optin);
-    info.driver_version = driver_version;
-    info.runtime_version = runtime_version;
     return info;
 }
 
-// Obtains the cuTensorMapEncodeTiled driver entry point through the CUDA
-// Runtime's versioned entry-point lookup (cudaGetDriverEntryPointByVersion),
-// per the CUDA 13.1 guide's recommended mechanism for calling driver-only
-// APIs from runtime-API code. This avoids linking against a driver stub
-// library (libcuda.so), which is unavailable in the GPU-free build
-// container: the symbol is resolved at run time, only when this binary
-// actually executes on a GPU host with a real driver present.
 PFN_cuTensorMapEncodeTiled_v12000 load_tensor_map_encode_tiled() {
     void* raw_fn = nullptr;
     cudaDriverEntryPointQueryResult status = cudaDriverEntryPointSymbolNotFound;
@@ -656,11 +480,6 @@ PFN_cuTensorMapEncodeTiled_v12000 load_tensor_map_encode_tiled() {
     return reinterpret_cast<PFN_cuTensorMapEncodeTiled_v12000>(raw_fn);
 }
 
-// Builds the frozen rank-2 tensor map descriptor for one specialization's
-// working set: UINT16 opaque storage (no arithmetic), 128 elements/row with
-// no padding (globalStrides[0] == tile_width_bytes exactly), no interleave,
-// no swizzle, no L2 promotion, no OOB fill. boxDim is the tile the TMA
-// engine unicasts per stage: 128 elements wide, tile_height rows tall.
 RunStatus build_tensor_map(PFN_cuTensorMapEncodeTiled_v12000 encode_fn, void* global_addr,
                             int64_t working_set_bytes, int tile_height, CUtensorMap* out_map) {
     *out_map = CUtensorMap{};
@@ -718,66 +537,8 @@ WorkingSetPlan plan_working_set(const GpuInfo& gpu, std::optional<int64_t> reque
     return plan;
 }
 
-WorkingSetPlan plan_self_test_working_set(const GpuInfo& gpu) {
-    const int64_t common_multiple = static_cast<int64_t>(gpu.sm_count) * 32 * 1024;
-    const int64_t working_set_bytes = common_multiple * kSelfTestCommonMultiples;
-    return {working_set_bytes, working_set_bytes, common_multiple};
-}
-
-std::string csv_quote(const std::string& s) {
-    std::string out = "\"";
-    for (char c : s) {
-        if (c == '"') out += "\"\"";
-        else out += c;
-    }
-    out += "\"";
-    return out;
-}
-
-std::string now_utc_iso8601() {
-    const std::time_t t = std::time(nullptr);
-    std::tm tm_utc{};
-    gmtime_r(&t, &tm_utc);
-    char buf[32];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_utc);
-    return std::string(buf);
-}
-
-std::string run_command_capture(const char* cmd) {
-    std::string result;
-    FILE* pipe = popen(cmd, "r");
-    if (!pipe) return "";
-    char buffer[256];
-    while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-    }
-    const int rc = pclose(pipe);
-    if (rc != 0) return "";
-    while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) result.pop_back();
-    return result;
-}
-
-std::string git_commit_hash() {
-    const std::string out = run_command_capture("git rev-parse HEAD 2>/dev/null");
-    return out.empty() ? "UNKNOWN" : out;
-}
-
-std::string git_dirty_flag() {
-    FILE* pipe = popen("git status --porcelain 2>/dev/null", "r");
-    if (!pipe) return "unknown";
-    char buffer[256];
-    bool any = false;
-    while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        any = true;
-    }
-    const int rc = pclose(pipe);
-    if (rc != 0) return "unknown";
-    return any ? "true" : "false";
-}
-
 struct CliConfig {
     bool help = false;
-    bool self_test = false;
     bool has_stages = false;
     int stages = 0;
     bool has_bif = false;
@@ -796,53 +557,9 @@ struct CliConfig {
 
 void print_usage(std::FILE* out) {
     std::fprintf(out,
-        "tma - standalone 2D unicast TMA global-memory->SMEM copy microbenchmark\n"
-        "\n"
-        "TMA arm of the LDGSTS vs TMA experiment. Measures the effective copy\n"
-        "bandwidth of a 2D unicast cp.async.bulk.tensor.2d.shared::cta.global\n"
-        "tile pipeline whose stages complete through mbarrier transaction-byte\n"
-        "accounting. Not LDGSTS, not DRAM/HBM bandwidth, not a final benchmark\n"
-        "result.\n"
-        "\n"
-        "Usage:\n"
-        "  tma --self-test\n"
-        "  tma --stages {2,4,8} --bytes-in-flight-kib {16,32,64} --run-kind {smoke,benchmark}\n"
-        "      [--working-set-mib N] [--passes N] [--warmup-ms N] [--repetitions N]\n"
-        "\n"
-        "Options:\n"
-        "  --stages {2,4,8}                Ring buffer depth (pipeline stages). Required.\n"
-        "  --bytes-in-flight-kib {16,32,64} Bytes in flight per SM. Required.\n"
-        "  --working-set-mib N              Requested working set in MiB, in [1, 1048576].\n"
-        "                                   Rounded up to a common multiple of\n"
-        "                                   sm_count*32KiB. Default: at least 4x the\n"
-        "                                   queried L2 cache size.\n"
-        "  --passes N                       Full working-set traversals per measured\n"
-        "                                   kernel launch, in [1, 1000000]. Default: 1.\n"
-        "  --warmup-ms N                    Minimum warm-up time in ms before timed\n"
-        "                                   repetitions begin, in [0, 3600000]. Default: 0.\n"
-        "  --repetitions N                  Separately timed kernel launches, in\n"
-        "                                   [1, 1000000]. Default: 1.\n"
-        "  --run-kind {smoke,benchmark}     'benchmark' requires working_set_bytes > 2xL2.\n"
-        "                                   'smoke' has no such requirement and its output\n"
-        "                                   is never a final experimental result. Required.\n"
-        "  --self-test                      Validate all nine specializations on a small\n"
-        "                                   fixed working set and exit; no CSV, no timing.\n"
-        "                                   Cannot be combined with the flags above.\n"
-        "  --help                           Show this help and exit.\n"
-        "\n"
-        "On a --stages/--bytes-in-flight-kib/--run-kind run, stdout carries only CSV (one\n"
-        "header line plus one row per repetition); diagnostics, progress, and errors go to\n"
-        "stderr. See README.md for the CSV schema and units.\n");
-}
-
-bool parse_int_arg(const std::string& s, int64_t* out) {
-    if (s.empty()) return false;
-    errno = 0;
-    char* endptr = nullptr;
-    const long long v = std::strtoll(s.c_str(), &endptr, 10);
-    if (errno != 0 || endptr == s.c_str() || *endptr != '\0') return false;
-    *out = static_cast<int64_t>(v);
-    return true;
+        "Usage: tma --stages {2,4,8} --bytes-in-flight-kib {16,32,64}\n"
+        "       --run-kind {smoke,benchmark} [--working-set-mib N] [--passes N]\n"
+        "       [--warmup-ms N] [--repetitions N]\n");
 }
 
 bool parse_cli(int argc, char** argv, CliConfig* cfg, std::string* err) {
@@ -855,10 +572,6 @@ bool parse_cli(int argc, char** argv, CliConfig* cfg, std::string* err) {
 
         if (arg == "--help" || arg == "-h") {
             cfg->help = true;
-            continue;
-        }
-        if (arg == "--self-test") {
-            cfg->self_test = true;
             continue;
         }
         if (arg == "--stages") {
@@ -943,18 +656,9 @@ bool parse_cli(int argc, char** argv, CliConfig* cfg, std::string* err) {
 
     if (cfg->help) return true;
 
-    if (cfg->self_test) {
-        if (cfg->has_stages || cfg->has_bif || cfg->has_working_set_mib || cfg->has_passes ||
-            cfg->has_warmup_ms || cfg->has_repetitions || cfg->has_run_kind) {
-            *err = "--self-test cannot be combined with benchmark options";
-            return false;
-        }
-        return true;
-    }
-
-    if (!cfg->has_stages) { *err = "--stages is required (unless --self-test)"; return false; }
-    if (!cfg->has_bif) { *err = "--bytes-in-flight-kib is required (unless --self-test)"; return false; }
-    if (!cfg->has_run_kind) { *err = "--run-kind is required (unless --self-test)"; return false; }
+    if (!cfg->has_stages) { *err = "--stages is required"; return false; }
+    if (!cfg->has_bif) { *err = "--bytes-in-flight-kib is required"; return false; }
+    if (!cfg->has_run_kind) { *err = "--run-kind is required"; return false; }
     return true;
 }
 
@@ -977,13 +681,6 @@ struct CsvRow {
     double effective_gbps = 0.0;
     std::string correctness;
     unsigned long long mismatches = 0;
-    std::string gpu_name;
-    std::string gpu_uuid;
-    std::string compute_capability;
-    int cuda_driver_version = 0;
-    int cuda_runtime_version = 0;
-    std::string git_commit;
-    std::string git_dirty;
 };
 
 void print_csv_header() {
@@ -994,9 +691,7 @@ void print_csv_header() {
         "threads_per_cta,target_ctas_per_sm,occupancy_ctas_per_sm,grid_blocks,"
         "sm_count,smem_reservation_bytes,l2_bytes,requested_working_set_bytes,"
         "working_set_bytes,working_set_l2_ratio,passes,useful_bytes,warmup_ms,"
-        "kernel_time_ms,effective_gbps,correctness,mismatches,gpu_name,gpu_uuid,"
-        "compute_capability,cuda_driver_version,cuda_runtime_version,git_commit,"
-        "git_dirty\n");
+        "kernel_time_ms,effective_gbps,correctness,mismatches\n");
 }
 
 void print_csv_row(const CsvRow& r) {
@@ -1015,19 +710,10 @@ void print_csv_row(const CsvRow& r) {
         << r.l2_bytes << ',' << r.requested_working_set_bytes << ',' << r.working_set_bytes << ','
         << working_set_l2_ratio << ',' << r.passes << ',' << r.useful_bytes << ',' << r.warmup_ms
         << ',' << r.kernel_time_ms << ',' << r.effective_gbps << ',' << r.correctness << ','
-        << r.mismatches << ',' << csv_quote(r.gpu_name) << ',' << r.gpu_uuid << ','
-        << r.compute_capability << ',' << r.cuda_driver_version << ',' << r.cuda_runtime_version
-        << ',' << r.git_commit << ',' << r.git_dirty << '\n';
+        << r.mismatches << '\n';
     std::fputs(oss.str().c_str(), stdout);
 }
 
-// Runs one (STAGES, COPIES) specialization: computes and verifies the
-// max-active-CTAs/SM=1 shared-memory reservation (payload ring + mbarrier
-// storage + occupancy padding), allocates and initializes the working set,
-// builds the tensor map descriptor for that working set, validates
-// correctness, and — only if validation passed and the caller asked for it —
-// runs warm-up plus timed repetitions, printing one CSV row per repetition.
-// Mismatches and CUDA/descriptor-encode failures remain distinct.
 template <int STAGES, int COPIES>
 RunStatus run_specialization(
         const GpuInfo& gpu,
@@ -1035,22 +721,10 @@ RunStatus run_specialization(
         const WorkingSetPlan& ws,
         const CliConfig& cli,
         PFN_cuTensorMapEncodeTiled_v12000 encode_fn,
-        bool benchmark_after_validate,
-        bool print_header,
-        const std::string& git_commit,
-        const std::string& git_dirty,
-        const std::string& gpu_uuid,
         uint64_t* out_mismatches) {
     static_assert(STAGES == 2 || STAGES == 4 || STAGES == 8, "invalid STAGES");
     if (out_mismatches) *out_mismatches = 0;
 
-    // Dispatch-time consistency check: the runtime Specialization the caller
-    // (dispatch_run's stages/bif_kib switch) selected must describe exactly
-    // the same geometry as this function's own <STAGES, COPIES> template
-    // arguments compute from the shared helpers above. A mismatch here means
-    // dispatch_run wired a (stages, bif_kib) pair to the wrong template
-    // instantiation; catching it before any CUDA call is cheaper and more
-    // legible than a downstream correctness mismatch.
     {
         constexpr int64_t kExpectedStageBytes = compute_stage_bytes(COPIES);
         constexpr int64_t kExpectedTileHeight = compute_tile_height(kExpectedStageBytes);
@@ -1076,8 +750,6 @@ RunStatus run_specialization(
              (long long)per_cta_bytes, (long long)spec.stage_bytes);
     }
 
-    // Every global-memory tensor coordinate this CTA will ever issue must fit
-    // in the int32_t TMA coordinate the PTX instruction takes.
     const int64_t max_tile_idx = static_cast<int64_t>(grid_blocks) * tiles_per_cta - 1;
     const int64_t max_row_coord = max_tile_idx * spec.tile_height;
     if (max_row_coord < 0 || max_row_coord > static_cast<int64_t>(INT32_MAX) - spec.tile_height) {
@@ -1086,13 +758,6 @@ RunStatus run_specialization(
              spec.stages, spec.bif_kib, (long long)max_row_coord, spec.tile_height);
     }
 
-    // Shared-memory reservation: strictly more than half of
-    // sharedMemPerMultiprocessor (so the resource limit permits at most one
-    // active CTA per SM) and at least bytes_in_flight_per_sm plus mbarrier
-    // storage, aligned to kSmemAlignmentBytes and capped at the max opt-in
-    // value. This is a residency limit, not an observation of runtime block
-    // placement. bytes_in_flight_per_sm itself counts payload bytes only;
-    // smem_reservation_bytes records the complete reservation.
     const int64_t barrier_bytes = static_cast<int64_t>(STAGES) * static_cast<int64_t>(sizeof(uint64_t));
     const int64_t payload_plus_barrier =
         round_up_to_multiple(spec.bytes_in_flight_per_sm + barrier_bytes, kSmemAlignmentBytes);
@@ -1169,7 +834,6 @@ RunStatus run_specialization(
     const bool validate_ok = (h_mismatch == 0);
 
     if (!validate_ok) return RunStatus::kMismatch;
-    if (!benchmark_after_validate) return RunStatus::kOk;
 
     DeviceBuffer<uint32_t> d_sink("sink");
     CUDA_CHECK(d_sink.allocate(static_cast<size_t>(grid_blocks) * kThreadsPerCta));
@@ -1188,7 +852,7 @@ RunStatus run_specialization(
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 
-    if (print_header) print_csv_header();
+    print_csv_header();
 
     const int64_t useful_bytes = ws.working_set_bytes * cli.passes;
 
@@ -1229,13 +893,6 @@ RunStatus run_specialization(
         row.effective_gbps = effective_gbps;
         row.correctness = "OK";
         row.mismatches = h_mismatch;
-        row.gpu_name = gpu.name;
-        row.gpu_uuid = gpu_uuid;
-        row.compute_capability = std::to_string(gpu.major) + "." + std::to_string(gpu.minor);
-        row.cuda_driver_version = gpu.driver_version;
-        row.cuda_runtime_version = gpu.runtime_version;
-        row.git_commit = git_commit;
-        row.git_dirty = git_dirty;
         print_csv_row(row);
     }
 
@@ -1245,67 +902,27 @@ RunStatus run_specialization(
 RunStatus dispatch_run(int stages, int bif_kib, const GpuInfo& gpu,
                        const Specialization& spec, const WorkingSetPlan& ws,
                        const CliConfig& cli, PFN_cuTensorMapEncodeTiled_v12000 encode_fn,
-                       bool benchmark_after_validate,
-                       bool print_header, const std::string& git_commit,
-                       const std::string& git_dirty, const std::string& gpu_uuid,
                        uint64_t* out_mismatches) {
     if (stages == 2 && bif_kib == 16)
-        return run_specialization<2, 4>(gpu, spec, ws, cli, encode_fn, benchmark_after_validate,
-                                         print_header, git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<2, 4>(gpu, spec, ws, cli, encode_fn, out_mismatches);
     if (stages == 2 && bif_kib == 32)
-        return run_specialization<2, 8>(gpu, spec, ws, cli, encode_fn, benchmark_after_validate,
-                                         print_header, git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<2, 8>(gpu, spec, ws, cli, encode_fn, out_mismatches);
     if (stages == 2 && bif_kib == 64)
-        return run_specialization<2, 16>(gpu, spec, ws, cli, encode_fn, benchmark_after_validate,
-                                          print_header, git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<2, 16>(gpu, spec, ws, cli, encode_fn, out_mismatches);
     if (stages == 4 && bif_kib == 16)
-        return run_specialization<4, 2>(gpu, spec, ws, cli, encode_fn, benchmark_after_validate,
-                                         print_header, git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<4, 2>(gpu, spec, ws, cli, encode_fn, out_mismatches);
     if (stages == 4 && bif_kib == 32)
-        return run_specialization<4, 4>(gpu, spec, ws, cli, encode_fn, benchmark_after_validate,
-                                         print_header, git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<4, 4>(gpu, spec, ws, cli, encode_fn, out_mismatches);
     if (stages == 4 && bif_kib == 64)
-        return run_specialization<4, 8>(gpu, spec, ws, cli, encode_fn, benchmark_after_validate,
-                                         print_header, git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<4, 8>(gpu, spec, ws, cli, encode_fn, out_mismatches);
     if (stages == 8 && bif_kib == 16)
-        return run_specialization<8, 1>(gpu, spec, ws, cli, encode_fn, benchmark_after_validate,
-                                         print_header, git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<8, 1>(gpu, spec, ws, cli, encode_fn, out_mismatches);
     if (stages == 8 && bif_kib == 32)
-        return run_specialization<8, 2>(gpu, spec, ws, cli, encode_fn, benchmark_after_validate,
-                                         print_header, git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<8, 2>(gpu, spec, ws, cli, encode_fn, out_mismatches);
     if (stages == 8 && bif_kib == 64)
-        return run_specialization<8, 4>(gpu, spec, ws, cli, encode_fn, benchmark_after_validate,
-                                         print_header, git_commit, git_dirty, gpu_uuid, out_mismatches);
+        return run_specialization<8, 4>(gpu, spec, ws, cli, encode_fn, out_mismatches);
     fail("internal error: no specialization for stages=%d bytes_in_flight_kib=%d", stages, bif_kib);
     std::abort();  // unreachable; fail() does not return.
-}
-
-RunStatus run_self_test(const GpuInfo& gpu, PFN_cuTensorMapEncodeTiled_v12000 encode_fn) {
-    std::fprintf(stderr, "tma: SELF_TEST start\n");
-    const WorkingSetPlan ws = plan_self_test_working_set(gpu);
-    std::fprintf(stderr, "tma: SELF_TEST working_set_bytes=%lld sm_count=%d\n",
-                 (long long)ws.working_set_bytes, gpu.sm_count);
-    const CliConfig dummy;
-    RunStatus overall_status = RunStatus::kOk;
-    for (const auto& spec : kSpecializations) {
-        uint64_t mismatches = 0;
-        const RunStatus status = dispatch_run(
-            spec.stages, spec.bif_kib, gpu, spec, ws, dummy, encode_fn,
-            /*benchmark_after_validate=*/false, /*print_header=*/false,
-            "", "", "", &mismatches);
-        std::fprintf(stderr,
-            "tma: SELF_TEST stages=%d bytes_in_flight_kib=%d stage_bytes=%lld "
-            "copies_per_thread_per_stage=%d result=%s mismatches=%llu\n",
-            spec.stages, spec.bif_kib, (long long)spec.stage_bytes, spec.copies_per_thread,
-            run_status_name(status), (unsigned long long)mismatches);
-        if (status == RunStatus::kCudaError) {
-            std::fprintf(stderr, "tma: SELF_TEST_RESULT=CUDA_ERROR\n");
-            return status;
-        }
-        if (status == RunStatus::kMismatch) overall_status = status;
-    }
-    std::fprintf(stderr, "tma: SELF_TEST_RESULT=%s\n", run_status_name(overall_status));
-    return overall_status;
 }
 
 }  // namespace
@@ -1323,71 +940,21 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // No CUDA calls above this point, so --help and argument-validation
-    // errors work in a GPU-less environment (e.g. inside the build
-    // container during static/CLI checks).
     const GpuInfo gpu = query_gpu_info();
-
-    const char* uuid_env = std::getenv("EXPECTED_GPU_UUID");
-    if (uuid_env == nullptr || uuid_env[0] == '\0') {
-        fail("EXPECTED_GPU_UUID is not set; run this binary only via scripts/run_gpu.sh");
-    }
-    const std::string gpu_uuid(uuid_env);
-
     const PFN_cuTensorMapEncodeTiled_v12000 encode_fn = load_tensor_map_encode_tiled();
+    const Specialization& spec = find_spec(cli.stages, cli.bif_kib);
+    const WorkingSetPlan ws = plan_working_set(
+        gpu, cli.has_working_set_mib ? std::optional<int64_t>(cli.working_set_mib) : std::nullopt);
+    if (cli.run_kind == "benchmark" && ws.working_set_bytes <= 2 * gpu.l2_bytes)
+        fail("working set must exceed twice the L2 cache size");
 
-    int overall_rc = 0;
-
-    if (cli.self_test) {
-        overall_rc = run_self_test(gpu, encode_fn) == RunStatus::kOk ? 0 : 1;
-    } else {
-        const Specialization& spec = find_spec(cli.stages, cli.bif_kib);
-        const WorkingSetPlan ws = plan_working_set(
-            gpu, cli.has_working_set_mib ? std::optional<int64_t>(cli.working_set_mib) : std::nullopt);
-
-        std::fprintf(stderr,
-            "tma: run_kind=%s stages=%d bytes_in_flight_kib=%d "
-            "requested_working_set_bytes=%lld working_set_bytes=%lld l2_bytes=%lld "
-            "common_multiple_bytes=%lld\n",
-            cli.run_kind.c_str(), cli.stages, cli.bif_kib, (long long)ws.requested_bytes,
-            (long long)ws.working_set_bytes, (long long)gpu.l2_bytes,
-            (long long)ws.common_multiple_bytes);
-
-        if (cli.run_kind == "benchmark" && ws.working_set_bytes <= 2 * gpu.l2_bytes) {
-            fail("working_set_bytes=%lld is not strictly greater than 2xL2 (%lld); increase "
-                 "--working-set-mib for a benchmark run",
-                 (long long)ws.working_set_bytes, (long long)(2 * gpu.l2_bytes));
-        }
-
-        const std::string git_commit_str = git_commit_hash();
-        const std::string git_dirty_str = git_dirty_flag();
-
-        uint64_t mismatches = 0;
-        const RunStatus status = dispatch_run(
-            cli.stages, cli.bif_kib, gpu, spec, ws, cli, encode_fn,
-            /*benchmark_after_validate=*/true, /*print_header=*/true,
-            git_commit_str, git_dirty_str, gpu_uuid, &mismatches);
-        if (status == RunStatus::kMismatch) {
-            std::fprintf(stderr,
-                "tma: ERROR: correctness validation FAILED for stages=%d "
-                "bytes_in_flight_kib=%d mismatches=%llu; no benchmark was run\n",
-                cli.stages, cli.bif_kib, (unsigned long long)mismatches);
-            overall_rc = 1;
-        } else if (status == RunStatus::kCudaError) {
-            std::fprintf(stderr,
-                "tma: ERROR: execution aborted by a CUDA error for stages=%d "
-                "bytes_in_flight_kib=%d; discard any partial CSV output\n",
-                cli.stages, cli.bif_kib);
-            overall_rc = 1;
-        } else {
-            std::fprintf(stderr, "tma: correctness=OK mismatches=0; benchmark complete\n");
-        }
+    uint64_t mismatches = 0;
+    const RunStatus status = dispatch_run(
+        cli.stages, cli.bif_kib, gpu, spec, ws, cli, encode_fn, &mismatches);
+    if (status != RunStatus::kOk || g_cleanup_failures != 0) {
+        std::fprintf(stderr, "tma: measurement failed; mismatches=%llu cleanup_errors=%d\n",
+                     static_cast<unsigned long long>(mismatches), g_cleanup_failures);
+        return 1;
     }
-
-    if (g_cleanup_failures != 0) {
-        std::fprintf(stderr, "tma: ERROR: %d resource cleanup failure(s) occurred\n",
-                     g_cleanup_failures);
-        overall_rc = 1;
-    }
-    return overall_rc;
+    return 0;
 }

@@ -1,6 +1,4 @@
-// Supplementary BF16 UMMA launch-scaling microbenchmark.
-// It crosses cta_group::1/2 with isolated/device-scale launches at N=256 and
-// depth=256. Residency, SM coverage and correctness are verified before timing.
+// Compare isolated and whole-device UMMA using whole-kernel CUDA events.
 
 #include <algorithm>
 #include <cctype>
@@ -22,11 +20,10 @@
 #include <cuda_runtime.h>
 #include <cuda/ptx>
 
+#include "../benchmark_common.cuh"
+
 namespace {
 
-// ---------------------------------------------------------------------------
-// Frozen supplementary contract constants.
-// ---------------------------------------------------------------------------
 constexpr int kThreadsPerCta = 128;
 constexpr int kN = 256;              // frozen: the ceiling-candidate N
 constexpr int kDepth = 256;          // frozen: the ceiling-candidate depth
@@ -35,24 +32,14 @@ constexpr int kMLocal = 128;         // rows of A/D owned by one CTA
 constexpr int kM1sm = 128;           // joint M of a cta_group::1 work unit
 constexpr int kM2sm = 256;           // joint M of a cta_group::2 work unit
 constexpr int kClusterCtas = 2;
-constexpr int kComputeCapabilityMajor = 10;
-constexpr int kComputeCapabilityMinor = 3;
 constexpr const char* kSchemaVersion = "umma-device-scaling.v1";
 constexpr const char* kOperandPath = "smem_smem";
 constexpr const char* kInputType = "bf16";
 constexpr const char* kAccumulatorType = "fp32";
 constexpr const char* kNotApplicable = "not_applicable";
 
-// Bounded residency handshake: a block that never observes every other
-// block's arrival within this many of its own SM cycles reports failure
-// instead of hanging. ~1 s at 2 GHz.
 constexpr unsigned long long kResidencyTimeoutCycles = 2000000000ULL;
 
-// RunMode is a launch argument, uniform across the grid, so branching on it
-// is never divergent.
-//   kUntimed   correctness/warm-up launch; no %clock64 read.
-//   kTimed     measured launch; the diagnostic %clock64 read is enabled.
-//   kResidency residency probe; returns before any TMEM or UMMA operation.
 enum class RunMode : int32_t { kUntimed = 0, kTimed = 1, kResidency = 2 };
 
 [[noreturn]] void fail(const char* fmt, ...) {
@@ -74,9 +61,6 @@ enum class RunMode : int32_t { kUntimed = 0, kTimed = 1, kResidency = 2 };
         }                                                                        \
     } while (0)
 
-// ---------------------------------------------------------------------------
-// Checked 64-bit integer arithmetic for FLOP/UMMA/allocation accounting.
-// ---------------------------------------------------------------------------
 int64_t checked_mul_i64(int64_t a, int64_t b, const char* what) {
     const __int128 result = static_cast<__int128>(a) * static_cast<__int128>(b);
     if (result > static_cast<__int128>(INT64_MAX) || result < static_cast<__int128>(INT64_MIN)) {
@@ -92,13 +76,6 @@ size_t checked_alloc_bytes(int64_t count, size_t element_bytes, const char* what
     return static_cast<size_t>(total);
 }
 
-// ---------------------------------------------------------------------------
-// Shared-memory layout: the fixed, non-swizzled, K-major packing of the
-// frozen kernels. K=16 and BF16's 128-bit normalization factor T=8 give one
-// elementary 8x16 core tile packed contiguously, LBO=128 B, SBO=256 B (PTX
-// ISA 9.3 section 9.7.17.3.3). The formula depends on neither M nor
-// .cta_group, so both arms below share it exactly as the frozen kernels do.
-// ---------------------------------------------------------------------------
 __device__ __forceinline__ int smem_core_tile_index(int group_idx, int pos_in_group, int k) {
     constexpr int kSboElem = 128;
     constexpr int kLboElem = 64;
@@ -108,8 +85,6 @@ __device__ __forceinline__ int smem_core_tile_index(int group_idx, int pos_in_gr
     return group_idx * kSboElem + chunk * kLboElem + pos_in_group * kT + t;
 }
 
-// PTX ISA 9.3 Table 45 shared-memory descriptor, identical to the frozen
-// kernels: only the base address differs between A and B.
 __device__ __forceinline__ uint64_t make_smem_descriptor(const void* smem_ptr) {
     constexpr uint32_t kLboBytes = 128;
     constexpr uint32_t kSboBytes = 256;
@@ -122,10 +97,6 @@ __device__ __forceinline__ uint64_t make_smem_descriptor(const void* smem_ptr) {
     return desc;
 }
 
-// PTX ISA 9.3 Table 47 (.kind::f16): dense, dtype=FP32, atype=btype=BF16,
-// N>>3 in bits 17-22, M>>4 in bits 24-28. M is the JOINT M of the work unit
-// (128 for cta_group::1, 256 for cta_group::2), exactly as in the frozen
-// kernels.
 template <int M>
 __device__ constexpr uint32_t make_instruction_descriptor() {
     static_assert(M == kM1sm || M == kM2sm, "M must be 128 (1-SM) or 256 (2-SM)");
@@ -140,8 +111,6 @@ __device__ constexpr uint32_t make_instruction_descriptor() {
     return desc;
 }
 
-// Field-by-field re-derivation, independent of the shifts above, so a
-// regression in either expression fails to compile.
 template <int M>
 __device__ constexpr bool validate_instruction_descriptor() {
     constexpr uint32_t d = make_instruction_descriptor<M>();
@@ -157,12 +126,6 @@ __device__ constexpr bool validate_instruction_descriptor() {
 static_assert(validate_instruction_descriptor<kM1sm>(), "1-SM instruction descriptor is malformed");
 static_assert(validate_instruction_descriptor<kM2sm>(), "2-SM instruction descriptor is malformed");
 
-// ---------------------------------------------------------------------------
-// tcgen05 inline-PTX primitives. CUDA 13.1's <cuda/ptx> does not wrap the
-// tcgen05 family, so these are hand-written from PTX ISA 9.3 sections
-// 9.7.17.7 (alloc/dealloc/relinquish), 9.7.17.10.9.1 (mma) and 9.7.17.12.1
-// (commit); they are transcriptions of the frozen kernels' primitives.
-// ---------------------------------------------------------------------------
 __device__ __forceinline__ void issue_one_umma_1sm(uint32_t d_tmem, uint64_t a_desc, uint64_t b_desc,
                                                    uint32_t idesc, int enable_input_d) {
     asm volatile(
@@ -190,8 +153,6 @@ __device__ __forceinline__ void commit_umma_1sm(uint32_t mbar_addr) {
                  : : "r"(mbar_addr) : "memory");
 }
 
-// The multicast form signals the mbarrier of every CTA selected by ctaMask
-// at the same relative shared-memory offset (PTX ISA 9.3 section 9.7.17.12.1).
 __device__ __forceinline__ void commit_umma_2sm_multicast(uint32_t mbar_addr, uint16_t cta_mask) {
     asm volatile(
         "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [%0], %1;"
@@ -226,8 +187,6 @@ __device__ __forceinline__ void tcgen05_relinquish_alloc_permit_2sm() {
     asm volatile("tcgen05.relinquish_alloc_permit.cta_group::2.sync.aligned;" : : : "memory");
 }
 
-// .fence::after_thread_sync, .ld and .wait::ld take no .cta_group qualifier:
-// every thread reads only its own CTA's Tensor Memory in both arms.
 __device__ __forceinline__ void tcgen05_fence_after_thread_sync() {
     asm volatile("tcgen05.fence::after_thread_sync;" : : : "memory");
 }
@@ -254,14 +213,6 @@ __device__ __forceinline__ void fence_mbarrier_init_release_cluster() {
     cuda::ptx::fence_mbarrier_init(cuda::ptx::sem_release, cuda::ptx::scope_cluster);
 }
 
-// ---------------------------------------------------------------------------
-// TMEM addressing (PTX ISA 9.3 sections 9.7.17.1.1 and 9.7.17.8.1): lane
-// index in bits 31-16, column index in bits 15-0; each warp of the
-// warpgroup owns its own 32-lane chunk and must add that chunk's lane base
-// to the collective taddr. Tensor Memory is per-CTA, so this is identical
-// for both arms; the CTA-pair rank offset belongs only in the global output
-// index.
-// ---------------------------------------------------------------------------
 constexpr uint32_t kTmemLaneShift = 16;
 constexpr uint32_t kTmemRowsPerWarp = 32;
 constexpr uint32_t kTmemColsPerFragment = 32;
@@ -277,18 +228,7 @@ __device__ __forceinline__ int current_smid() {
     return static_cast<int>(smid);
 }
 
-// ---------------------------------------------------------------------------
-// Bounded residency handshake. Every block arrives once, then spins until it
-// observes every block of the grid having arrived, or until its own
-// deadline expires. If EVERY block reports success then no block had exited
-// its spin when the last block arrived, so all gridDim.x blocks were
-// simultaneously resident at that instant. A timeout is reported, never
-// hidden, and never turns into a hang.
-//
-// Executed only in RunMode::kResidency, in a separate untimed launch with
-// exactly the geometry, dynamic shared-memory reservation and kernel
-// function of the measured launches, so it never perturbs a timed sample.
-// ---------------------------------------------------------------------------
+// All blocks must overlap before full-device coverage is accepted.
 __device__ __forceinline__ void residency_handshake(unsigned int* __restrict__ g_arrival,
                                                     int* __restrict__ g_resident_ok) {
     if (threadIdx.x != 0) return;
@@ -310,11 +250,6 @@ __device__ __forceinline__ void residency_handshake(unsigned int* __restrict__ g
 
 }  // namespace
 
-// ---------------------------------------------------------------------------
-// 1-SM arm: one independent cta_group::1 work unit per CTA. gridDim.x is
-// free (1 for the isolated scale, one CTA per usable SM for the device
-// scale); every buffer is indexed by block position, never by %smid.
-// ---------------------------------------------------------------------------
 extern "C" __global__ __launch_bounds__(128) void umma_1sm_scaling_m128n256k16_d256(
     int64_t iterations, RunMode mode, float* __restrict__ g_d_out,
     unsigned long long* __restrict__ g_cycles, int* __restrict__ g_launch_ok,
@@ -323,9 +258,6 @@ extern "C" __global__ __launch_bounds__(128) void umma_1sm_scaling_m128n256k16_d
     const int tid = threadIdx.x;
     const int block = static_cast<int>(blockIdx.x);
 
-    // Launch contract, evaluated before any __syncthreads(), mbarrier init,
-    // TMEM allocation or UMMA instruction, so a rejected launch can never
-    // leave TMEM allocated or block on a barrier.
     const bool contract_ok = gridDim.x >= 1 && gridDim.y == 1 && gridDim.z == 1 &&
                              blockDim.x == kThreadsPerCta && blockDim.y == 1 && blockDim.z == 1;
     if (!contract_ok) {
@@ -348,7 +280,6 @@ extern "C" __global__ __launch_bounds__(128) void umma_1sm_scaling_m128n256k16_d
     __nv_bfloat16* B = reinterpret_cast<__nv_bfloat16*>(smem + kABytes);
     const int warp_id = tid / 32;
 
-    // Frozen validation pattern, written directly into the K-major layout.
     for (int idx = tid; idx < kMLocal * kK; idx += kThreadsPerCta) {
         const int row = idx / kK;
         const int k = idx % kK;
@@ -412,9 +343,6 @@ extern "C" __global__ __launch_bounds__(128) void umma_1sm_scaling_m128n256k16_d
         g_cycles[block] = elapsed_cycles;
     }
 
-    // Untimed readback: the leader's confirmed mbarrier completion plus this
-    // barrier establish the ordering the "non-pipelined, different thread"
-    // pattern requires before any other thread's fence + tcgen05.ld.
     __syncthreads();
     tcgen05_fence_after_thread_sync();
 
@@ -444,12 +372,6 @@ extern "C" __global__ __launch_bounds__(128) void umma_1sm_scaling_m128n256k16_d
     }
 }
 
-// ---------------------------------------------------------------------------
-// 2-SM arm: one independent cta_group::2 work unit per two-CTA cluster.
-// gridDim.x must be an even multiple of the cluster size; cluster index is
-// blockIdx.x / 2 and is cross-checked against %cluster_ctarank rather than
-// assumed. Every buffer is indexed by block or cluster position.
-// ---------------------------------------------------------------------------
 extern "C" __global__ __cluster_dims__(2, 1, 1) __launch_bounds__(128)
 void umma_2sm_scaling_m256n256k16_d256(
     int64_t iterations, RunMode mode, float* __restrict__ g_d_out,
@@ -461,10 +383,6 @@ void umma_2sm_scaling_m256n256k16_d256(
     const uint32_t cluster_ctarank = cuda::ptx::get_sreg_cluster_ctarank();
     const uint32_t cluster_nctarank = cuda::ptx::get_sreg_cluster_nctarank();
 
-    // The predicate depends only on cluster-uniform values plus the
-    // ISA-guaranteed rank range, so both CTAs reach the same verdict: an
-    // accepted launch never lets one CTA enter a collective operation while
-    // its peer has rejected and returned.
     const bool contract_ok = gridDim.x >= kClusterCtas && gridDim.x % kClusterCtas == 0 &&
                              gridDim.y == 1 && gridDim.z == 1 && blockDim.x == kThreadsPerCta &&
                              blockDim.y == 1 && blockDim.z == 1 &&
@@ -494,10 +412,6 @@ void umma_2sm_scaling_m256n256k16_d256(
     __nv_bfloat16* B = reinterpret_cast<__nv_bfloat16*>(smem + kABytes);
     const int warp_id = tid / 32;
 
-    // A's VALUE depends on the global row (cta_rank*128 + local_row) and B's
-    // on the global column (cta_rank*128 + local_col), so a swapped,
-    // duplicated or missing rank offset shows up as a numerical mismatch;
-    // their PHYSICAL positions stay local because SMEM and TMEM are per-CTA.
     for (int idx = tid; idx < kMLocal * kK; idx += kThreadsPerCta) {
         const int local_row = idx / kK;
         const int k = idx % kK;
@@ -518,11 +432,6 @@ void umma_2sm_scaling_m256n256k16_d256(
 
     __syncthreads();
 
-    // Two different, non-substitutable fences: fence.mbarrier_init publishes
-    // this mbarrier's own initialization to the cluster so the peer's
-    // multicast arrive cannot race it; fence.proxy.async at CLUSTER scope
-    // publishes this CTA's generic-proxy A/B writes to the async proxy the
-    // joint MMA reads through, including from the peer CTA.
     if (tid == 0) {
         cuda::ptx::mbarrier_init(&mbar, 1u);
         fence_mbarrier_init_release_cluster();
@@ -536,8 +445,6 @@ void umma_2sm_scaling_m256n256k16_d256(
     cuda::ptx::barrier_cluster_arrive();
     cuda::ptx::barrier_cluster_wait();
 
-    // alloc/dealloc/relinquish are issued collectively by warp 0 of BOTH
-    // CTAs of the pair (Issue Granularity, PTX ISA 9.3 Table 51).
     if (warp_id == 0) {
         tcgen05_alloc_2sm(static_cast<uint32_t>(__cvta_generic_to_shared(&tmem_addr_shared)),
                           static_cast<uint32_t>(kN));
@@ -553,12 +460,6 @@ void umma_2sm_scaling_m256n256k16_d256(
     constexpr uint32_t idesc = make_instruction_descriptor<kM2sm>();
     const uint32_t mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&mbar));
 
-    // Only rank 0's elected leader issues the burst and its multicast
-    // commit; BOTH ranks' leaders wait on their own local mbarrier every
-    // iteration, and every thread of both CTAs rendezvouses on a cluster
-    // barrier before the next commit, so no arrive-on can overtake an
-    // unobserved mbarrier phase. That handshake sits inside the measured
-    // region, exactly as in the frozen 2-SM kernel.
     unsigned long long elapsed_cycles = 0;
     uint64_t start_clock = 0, end_clock = 0;
     if (is_leader && cta_rank == 0 && mode == RunMode::kTimed) {
@@ -593,9 +494,6 @@ void umma_2sm_scaling_m256n256k16_d256(
         g_cycles[cluster_index] = elapsed_cycles;
     }
 
-    // Untimed readback by every thread of BOTH CTAs; each CTA reads only its
-    // own 128 local TMEM lanes and the rank offset appears only in the
-    // global output row index.
     __syncthreads();
     tcgen05_fence_after_thread_sync();
 
@@ -630,16 +528,10 @@ void umma_2sm_scaling_m256n256k16_d256(
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// Host: CPU reference, device query, launch planning, CLI, CSV, orchestration.
-// ---------------------------------------------------------------------------
 
 typedef void (*KernelFn)(int64_t, RunMode, float*, unsigned long long*, int*, unsigned int*, int*,
                          int*);
 
-// ---- CPU reference: logical formulas only, independent of the GPU -------
-// ---- kernels' physical SMEM/TMEM packing. One 256x256 table serves both -
-// ---- arms; the 1-SM arm compares against its first 128 rows. ------------
 int32_t reference_a(int global_row, int k) { return ((global_row + 3 * k) % 7) - 3; }
 int32_t reference_b(int k, int col) { return ((2 * k + col) % 5) - 2; }
 
@@ -668,7 +560,6 @@ struct ValidationResult {
     double max_abs_error = 0.0;
 };
 
-// Validates EVERY work unit's complete output, never only the first one.
 ValidationResult validate_d(const std::vector<float>& d_out, int work_units, int m,
                             const std::vector<double>& reference) {
     ValidationResult r;
@@ -697,106 +588,23 @@ ValidationResult validate_d(const std::vector<float>& d_out, int work_units, int
     return r;
 }
 
-// ---------------------------------------------------------------------------
-// GPU environment/provenance: exactly one visible device, logical device 0,
-// compute capability 10.3, and its CUDA-reported UUID (never nvidia-smi)
-// matches EXPECTED_GPU_UUID.
-// ---------------------------------------------------------------------------
 struct GpuInfo {
-    std::string name;
-    int major = 0;
-    int minor = 0;
-    std::string uuid;
-    int driver_version = 0;
-    int runtime_version = 0;
     int multi_processor_count = 0;
     size_t shared_mem_per_multiprocessor = 0;
     int shared_mem_per_block_optin = 0;
 };
 
-std::string format_gpu_uuid(const cudaUUID_t& uuid) {
-    const unsigned char* b = reinterpret_cast<const unsigned char*>(uuid.bytes);
-    char buf[64];
-    std::snprintf(buf, sizeof(buf),
-                  "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", b[0],
-                  b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13],
-                  b[14], b[15]);
-    return std::string(buf);
-}
-
-bool looks_like_gpu_uuid(const std::string& s) {
-    if (s.size() != 40) return false;
-    if (s.compare(0, 4, "GPU-") != 0) return false;
-    for (size_t i = 4; i < s.size(); ++i) {
-        const size_t j = i - 4;
-        if (j == 8 || j == 13 || j == 18 || j == 23) {
-            if (s[i] != '-') return false;
-        } else if (!std::isxdigit(static_cast<unsigned char>(s[i]))) {
-            return false;
-        }
-    }
-    return true;
-}
-
-std::string to_lower(std::string s) {
-    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return s;
-}
-
-GpuInfo query_and_verify_gpu() {
-    int device_count = 0;
-    CUDA_CHECK_FATAL(cudaGetDeviceCount(&device_count));
-    if (device_count != 1) fail("expected exactly 1 visible CUDA device, found %d", device_count);
-    CUDA_CHECK_FATAL(cudaSetDevice(0));
-    int current_device = -1;
-    CUDA_CHECK_FATAL(cudaGetDevice(&current_device));
-    if (current_device != 0) {
-        fail("expected the visible device to be logical device 0, got %d", current_device);
-    }
-
-    cudaDeviceProp prop{};
-    CUDA_CHECK_FATAL(cudaGetDeviceProperties(&prop, 0));
-    if (prop.major != kComputeCapabilityMajor || prop.minor != kComputeCapabilityMinor) {
-        fail("expected compute capability %d.%d, found %d.%d", kComputeCapabilityMajor,
-             kComputeCapabilityMinor, prop.major, prop.minor);
-    }
+GpuInfo query_gpu_info() {
+    const cudaDeviceProp prop = benchmark_device_properties();
     if (prop.multiProcessorCount < 1) fail("device reports %d SMs", prop.multiProcessorCount);
     if (prop.clusterLaunch == 0) fail("device does not report cluster launch support");
-
-    const char* uuid_env = std::getenv("EXPECTED_GPU_UUID");
-    if (uuid_env == nullptr || uuid_env[0] == '\0') {
-        fail("EXPECTED_GPU_UUID is not set; run this binary only via scripts/run_gpu.sh");
-    }
-    const std::string expected_uuid(uuid_env);
-    if (!looks_like_gpu_uuid(expected_uuid)) {
-        fail("EXPECTED_GPU_UUID='%s' is not correctly formatted", expected_uuid.c_str());
-    }
-    const std::string visible_uuid = format_gpu_uuid(prop.uuid);
-    if (to_lower(visible_uuid) != to_lower(expected_uuid)) {
-        fail("visible GPU UUID %s does not match EXPECTED_GPU_UUID %s", visible_uuid.c_str(),
-             expected_uuid.c_str());
-    }
-
-    int driver_version = 0, runtime_version = 0;
-    CUDA_CHECK_FATAL(cudaDriverGetVersion(&driver_version));
-    CUDA_CHECK_FATAL(cudaRuntimeGetVersion(&runtime_version));
-
     GpuInfo info;
-    info.name = prop.name;
-    info.major = prop.major;
-    info.minor = prop.minor;
-    info.uuid = visible_uuid;
-    info.driver_version = driver_version;
-    info.runtime_version = runtime_version;
     info.multi_processor_count = prop.multiProcessorCount;
     info.shared_mem_per_multiprocessor = prop.sharedMemPerMultiprocessor;
     info.shared_mem_per_block_optin = prop.sharedMemPerBlockOptin;
     return info;
 }
 
-// ---------------------------------------------------------------------------
-// Launch planning.
-// ---------------------------------------------------------------------------
 struct Plan {
     std::string method;
     std::string scale;
@@ -817,7 +625,6 @@ struct Plan {
     int64_t total_umma = 0;
     int64_t total_flops = 0;
 
-    // Device-side buffers, allocated once for the whole run.
     float* d_out = nullptr;
     unsigned long long* cycles = nullptr;
     int* launch_ok = nullptr;
@@ -830,7 +637,6 @@ struct Plan {
     int residency_ok_blocks = 0;
 };
 
-// One measured launch's observations.
 struct LaunchResult {
     float kernel_time_ms = 0.0f;
     int observed_unique_sm = 0;
@@ -872,12 +678,8 @@ bool coverage_is_evidenced(const Plan& plan, int observed_unique_sm) {
     return plan.residency_proven && observed_unique_sm == plan.planned_active_sm;
 }
 
-// ---------------------------------------------------------------------------
-// CLI.
-// ---------------------------------------------------------------------------
 struct CliConfig {
     bool help = false;
-    bool self_test = false;
     bool has_run_kind = false;
     std::string run_kind;
     std::string campaign_kind = "none";
@@ -891,57 +693,10 @@ struct CliConfig {
 };
 
 void print_usage(std::FILE* out) {
-    std::fprintf(
-        out,
-        "umma_device_scaling - isolated vs device-scale BF16 UMMA (tcgen05.mma, kind::f16)\n"
-        "\n"
-        "Supplementary launch-scale arm of the BF16 UMMA study, frozen at N=256,\n"
-        "depth=256, K=16, BF16 x BF16 -> FP32, operands in SMEM. It measures four\n"
-        "configurations in one process: {umma_1sm, umma_2sm} x {isolated,\n"
-        "device_scale}. 'device_scale' is a launch scale, not a third UMMA\n"
-        "instruction: PTX provides only cta_group::1 and cta_group::2.\n"
-        "\n"
-        "Every published sample is a whole-kernel CUDA-event measurement; %%clock64\n"
-        "is a per-SM counter and is kept only as a min/max diagnostic. This is a\n"
-        "compute-focused microbenchmark with operands already in shared memory: it\n"
-        "is not a GEMM, not an HBM benchmark, and not an architectural peak claim.\n"
-        "\n"
-        "Usage:\n"
-        "  umma_device_scaling --help\n"
-        "  umma_device_scaling --self-test\n"
-        "  umma_device_scaling --run-kind {smoke,benchmark} --iterations N \\\n"
-        "                      --warmup-iterations N --repetitions N \\\n"
-        "                      [--campaign-kind {none,pilot,final}]\n"
-        "\n"
-        "Options:\n"
-        "  --run-kind {smoke,benchmark}     Required. Labels the CSV row; both kinds\n"
-        "                                   run identically. Neither is publishable.\n"
-        "  --campaign-kind {none,pilot,final}\n"
-        "                                   Optional, default 'none'. Recorded only.\n"
-        "  --iterations N                   Required, N >= 1. Timed outer-loop repeats\n"
-        "                                   per kernel launch, per work unit.\n"
-        "  --warmup-iterations N            Required, N >= 0. Discarded launches per\n"
-        "                                   configuration before the measured ones.\n"
-        "  --repetitions N                  Required, N >= 1. Measured launches per\n"
-        "                                   configuration; one CSV row each.\n"
-        "  --self-test                      Validate all four configurations on a small\n"
-        "                                   fixed iteration count and exit; no CSV, no\n"
-        "                                   timing. Cannot combine with other options.\n"
-        "  --help                           Show this help and exit.\n"
-        "\n"
-        "On a --run-kind run, stdout carries only CSV (one header line plus one row\n"
-        "per configuration per repetition, in execution order); diagnostics and\n"
-        "errors go to stderr. See README.md for the CSV schema and units.\n");
-}
-
-bool parse_int_arg(const std::string& s, int64_t* out) {
-    if (s.empty()) return false;
-    errno = 0;
-    char* endptr = nullptr;
-    const long long v = std::strtoll(s.c_str(), &endptr, 10);
-    if (errno != 0 || endptr == s.c_str() || *endptr != '\0') return false;
-    *out = static_cast<int64_t>(v);
-    return true;
+    std::fprintf(out,
+        "Usage: umma_device_scaling --run-kind {smoke,benchmark} --iterations N\n"
+        "       --warmup-iterations N --repetitions N\n"
+        "       [--campaign-kind {none,pilot,final}]\n");
 }
 
 bool parse_cli(int argc, char** argv, CliConfig* cfg, std::string* err) {
@@ -959,10 +714,6 @@ bool parse_cli(int argc, char** argv, CliConfig* cfg, std::string* err) {
 
         if (arg == "--help") {
             if (!once(cfg->help, "--help")) return false;
-            continue;
-        }
-        if (arg == "--self-test") {
-            if (!once(cfg->self_test, "--self-test")) return false;
             continue;
         }
         if (arg == "--run-kind") {
@@ -1018,81 +769,23 @@ bool parse_cli(int argc, char** argv, CliConfig* cfg, std::string* err) {
 
     const bool any_other = cfg->has_run_kind || cfg->has_campaign_kind || cfg->has_iterations ||
                            cfg->has_warmup_iterations || cfg->has_repetitions;
-    if (cfg->help && cfg->self_test) {
-        *err = "--help and --self-test are mutually exclusive";
-        return false;
-    }
     if (cfg->help) {
         if (any_other) { *err = "--help cannot be combined with other options"; return false; }
         return true;
     }
-    if (cfg->self_test) {
-        if (any_other) { *err = "--self-test cannot be combined with other options"; return false; }
-        return true;
-    }
-    if (!cfg->has_run_kind) { *err = "--run-kind is required (unless --help/--self-test)"; return false; }
-    if (!cfg->has_iterations) { *err = "--iterations is required (unless --help/--self-test)"; return false; }
+    if (!cfg->has_run_kind) { *err = "--run-kind is required"; return false; }
+    if (!cfg->has_iterations) { *err = "--iterations is required"; return false; }
     if (!cfg->has_warmup_iterations) {
-        *err = "--warmup-iterations is required (unless --help/--self-test)";
+        *err = "--warmup-iterations is required";
         return false;
     }
-    if (!cfg->has_repetitions) { *err = "--repetitions is required (unless --help/--self-test)"; return false; }
+    if (!cfg->has_repetitions) { *err = "--repetitions is required"; return false; }
     return true;
-}
-
-// ---------------------------------------------------------------------------
-// CSV.
-// ---------------------------------------------------------------------------
-std::string csv_quote(const std::string& s) {
-    std::string out = "\"";
-    for (char c : s) {
-        if (c == '"') out += "\"\"";
-        else out += c;
-    }
-    out += "\"";
-    return out;
-}
-
-std::string now_utc_iso8601() {
-    const std::time_t t = std::time(nullptr);
-    std::tm tm_utc{};
-    gmtime_r(&t, &tm_utc);
-    char buf[32];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_utc);
-    return std::string(buf);
-}
-
-std::string run_command_capture(const char* cmd) {
-    std::string result;
-    FILE* pipe = popen(cmd, "r");
-    if (!pipe) return "";
-    char buffer[256];
-    while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) result += buffer;
-    const int rc = pclose(pipe);
-    if (rc != 0) return "";
-    while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) result.pop_back();
-    return result;
-}
-
-std::string git_commit_hash() {
-    const std::string out = run_command_capture("git rev-parse HEAD 2>/dev/null");
-    return out.empty() ? "UNKNOWN" : out;
-}
-
-std::string git_dirty_flag() {
-    FILE* pipe = popen("git status --porcelain 2>/dev/null", "r");
-    if (!pipe) return "unknown";
-    char buffer[256];
-    bool any = false;
-    while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) any = true;
-    const int rc = pclose(pipe);
-    if (rc != 0) return "unknown";
-    return any ? "true" : "false";
 }
 
 void print_csv_header() {
     std::printf(
-        "schema_version,timestamp_utc,campaign_kind,run_kind,publishable,sample_index,"
+        "schema_version,timestamp_utc,campaign_kind,run_kind,sample_index,"
         "execution_order,method,scale,cta_group,m,n,k,depth,iterations,warmup_iterations,"
         "repetitions,work_unit_count,umma_per_work_unit_per_iteration,total_umma_count,"
         "flops_per_umma,total_flops,kernel_time_ms,total_tflops,tflops_per_planned_active_sm,"
@@ -1101,8 +794,7 @@ void print_csv_header() {
         "occupancy_blocks_per_sm,max_active_clusters,shared_memory_reservation_bytes,"
         "unused_sm_count,coverage_status,residency_evidence,diagnostic_clock64_cycles_min,"
         "diagnostic_clock64_cycles_max,operand_path,input_type,accumulator_type,correctness,"
-        "mismatches,max_abs_error,gpu_name,gpu_uuid,compute_capability,cuda_driver_version,"
-        "cuda_runtime_version,git_commit,git_dirty\n");
+        "mismatches,max_abs_error\n");
 }
 
 struct RowContext {
@@ -1116,9 +808,6 @@ struct RowContext {
     int64_t repetitions = 0;
     int hardware_sm_count = 0;
     int64_t shared_memory_reservation_bytes = 0;
-    GpuInfo gpu;
-    std::string git_commit;
-    std::string git_dirty;
 };
 
 void print_csv_row(const Plan& plan, const LaunchResult& measurement, const RowContext& ctx) {
@@ -1132,7 +821,7 @@ void print_csv_row(const Plan& plan, const LaunchResult& measurement, const RowC
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(6);
     oss << kSchemaVersion << ',' << ctx.timestamp_utc << ',' << ctx.campaign_kind << ','
-        << ctx.run_kind << ',' << "false" << ',' << ctx.sample_index << ',' << ctx.execution_order
+        << ctx.run_kind << ',' << ctx.sample_index << ',' << ctx.execution_order
         << ',' << plan.method << ',' << plan.scale << ',' << plan.cta_group << ',' << plan.m << ','
         << kN << ',' << kK << ',' << kDepth << ',' << ctx.iterations << ','
         << ctx.warmup_iterations << ',' << ctx.repetitions << ',' << plan.work_units << ','
@@ -1156,17 +845,9 @@ void print_csv_row(const Plan& plan, const LaunchResult& measurement, const RowC
         << (plan.residency_proven ? "all_blocks_simultaneously_resident" : "not_established") << ','
         << measurement.cycles_min << ',' << measurement.cycles_max << ',' << kOperandPath << ','
         << kInputType << ',' << kAccumulatorType << ',' << "OK" << ','
-        << measurement.validation.mismatches << ',' << measurement.validation.max_abs_error << ','
-        << csv_quote(ctx.gpu.name) << ',' << ctx.gpu.uuid << ',' << ctx.gpu.major << '.'
-        << ctx.gpu.minor << ',' << ctx.gpu.driver_version << ',' << ctx.gpu.runtime_version << ','
-        << ctx.git_commit << ',' << ctx.git_dirty << '\n';
+        << measurement.validation.mismatches << ',' << measurement.validation.max_abs_error << '\n';
     std::fputs(oss.str().c_str(), stdout);
 }
-
-// ---------------------------------------------------------------------------
-// Orchestration.
-// ---------------------------------------------------------------------------
-constexpr int64_t kSelfTestIterations = 2;
 
 void allocate_plan(Plan& plan) {
     const int64_t d_elements =
@@ -1194,9 +875,6 @@ void free_plan(Plan& plan) {
     CUDA_CHECK_FATAL(cudaFree(plan.arrival));
 }
 
-// Runs one launch of one configuration. Buffer resets, the device-to-host
-// copies, and host validation are all outside the CUDA-event interval, which
-// therefore contains exactly one kernel execution.
 LaunchResult run_launch(Plan& plan, int64_t iterations, RunMode mode, size_t smem_bytes,
                         cudaEvent_t start, cudaEvent_t stop, bool measure, bool validate,
                         const std::vector<double>& reference) {
@@ -1283,13 +961,6 @@ LaunchResult run_launch(Plan& plan, int64_t iterations, RunMode mode, size_t sme
          plan.method.c_str(), plan.scale.c_str());
 }
 
-// ---------------------------------------------------------------------------
-// Shared-memory reservation: two CTAs must not fit on one SM, so that
-// gridDim.x == multiProcessorCount really means one resident CTA per SM and
-// no SM ever hosts two 256-column Tensor Memory allocations. The value is
-// derived from the device's own reported capacity and then confirmed with
-// the occupancy API rather than assumed.
-// ---------------------------------------------------------------------------
 size_t choose_shared_memory_reservation(const GpuInfo& gpu) {
     const size_t operand_bytes_1sm = static_cast<size_t>(kMLocal) * kK * 2 + static_cast<size_t>(kN) * kK * 2;
     const size_t operand_bytes_2sm =
@@ -1362,8 +1033,6 @@ Plan make_plan(const char* method, const char* scale, int cta_group, int m, int 
              method, scale, grid_blocks, gpu.multi_processor_count);
     }
     plan.work_units = grid_blocks / cluster_size;
-    // Occupancy is confirmed at exactly one resident CTA per SM, so the CTA
-    // count is also the planned active-SM count.
     plan.planned_active_sm = grid_blocks;
     plan.unused_sm = gpu.multi_processor_count - plan.planned_active_sm;
     plan.flops_per_umma =
@@ -1374,7 +1043,6 @@ Plan make_plan(const char* method, const char* scale, int cta_group, int m, int 
     return plan;
 }
 
-// The four frozen configurations, in their canonical (not execution) order.
 enum PlanIndex { kOneIsolated = 0, kTwoIsolated = 1, kOneDevice = 2, kTwoDevice = 3, kPlanCount = 4 };
 
 std::vector<Plan> build_plans(const GpuInfo& gpu, size_t reservation, int64_t iterations) {
@@ -1415,8 +1083,6 @@ std::vector<Plan> build_plans(const GpuInfo& gpu, size_t reservation, int64_t it
                               &umma_2sm_scaling_m256n256k16_d256, gpu, blocks_2sm, max_clusters,
                               iterations));
 
-    // Equal-work invariant: at equal, even active-SM coverage the two
-    // device-scale arms must issue exactly the same number of FLOPs.
     const Plan& one = plans[kOneDevice];
     const Plan& two = plans[kTwoDevice];
     if (checked_mul_i64(one.flops_per_umma, 2, "2*flops_per_umma_1sm") != two.flops_per_umma) {
@@ -1449,32 +1115,6 @@ std::vector<Plan> build_plans(const GpuInfo& gpu, size_t reservation, int64_t it
     return plans;
 }
 
-int run_self_test(const GpuInfo& gpu, size_t reservation, const std::vector<double>& reference) {
-    std::fprintf(stderr, "umma_device_scaling: SELF_TEST start\n");
-    std::vector<Plan> plans = build_plans(gpu, reservation, kSelfTestIterations);
-    int passed = 0;
-    for (Plan& plan : plans) {
-        allocate_plan(plan);
-        const LaunchResult result = run_launch(plan, kSelfTestIterations, RunMode::kUntimed,
-                                               reservation, nullptr, nullptr, false, true, reference);
-        std::fprintf(stderr,
-                     "umma_device_scaling: SELF_TEST %s/%s grid=%d work_units=%d result=%s "
-                     "mismatches=%lld max_abs_error=%.6g unique_sm=%d\n",
-                     plan.method.c_str(), plan.scale.c_str(), plan.grid_blocks, plan.work_units,
-                     result.validation.ok ? "PASS" : "FAIL",
-                     (long long)result.validation.mismatches, result.validation.max_abs_error,
-                     result.observed_unique_sm);
-        if (result.validation.ok) ++passed;
-        free_plan(plan);
-    }
-    std::fprintf(stderr, "umma_device_scaling: SELF_TEST_RESULT %d/%d\n", passed, kPlanCount);
-    if (passed == kPlanCount) {
-        std::fprintf(stdout, "SELF_TEST: PASS (%d/%d)\n", passed, kPlanCount);
-        return 0;
-    }
-    return 1;
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1490,9 +1130,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // No CUDA call above this point, so --help and argument validation work
-    // in a GPU-less environment.
-    const GpuInfo gpu = query_and_verify_gpu();
+    const GpuInfo gpu = query_gpu_info();
     const std::vector<double> reference = build_reference();
     const size_t reservation = choose_shared_memory_reservation(gpu);
     CUDA_CHECK_FATAL(cudaFuncSetAttribute(reinterpret_cast<const void*>(&umma_1sm_scaling_m128n256k16_d256),
@@ -1501,10 +1139,6 @@ int main(int argc, char** argv) {
     CUDA_CHECK_FATAL(cudaFuncSetAttribute(reinterpret_cast<const void*>(&umma_2sm_scaling_m256n256k16_d256),
                                           cudaFuncAttributeMaxDynamicSharedMemorySize,
                                           static_cast<int>(reservation)));
-
-    if (cli.self_test) {
-        return run_self_test(gpu, reservation, reference);
-    }
 
     std::fprintf(stderr,
                  "umma_device_scaling: run_kind=%s campaign_kind=%s iterations=%lld "
@@ -1519,8 +1153,7 @@ int main(int argc, char** argv) {
     CUDA_CHECK_FATAL(cudaEventCreate(&start));
     CUDA_CHECK_FATAL(cudaEventCreate(&stop));
 
-    // Step 1: residency evidence, one untimed probe launch per configuration
-    // with exactly the measured geometry, reservation and kernel.
+    // Establish simultaneous residency before correctness and timing.
     for (Plan& plan : plans) {
         run_launch(plan, 1, RunMode::kResidency, reservation, nullptr, nullptr, false, false,
                    reference);
@@ -1534,8 +1167,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Step 2: untimed correctness validation of every work unit, before any
-    // measurement is collected.
+    // Validate all work units before collecting any timed sample.
     for (Plan& plan : plans) {
         const LaunchResult result = run_launch(plan, cli.iterations, RunMode::kUntimed, reservation,
                                                nullptr, nullptr, false, true, reference);
@@ -1547,7 +1179,6 @@ int main(int argc, char** argv) {
                      result.observed_unique_sm);
     }
 
-    // Step 3: discarded warm-up launches, on the measured code path.
     for (Plan& plan : plans) {
         for (int64_t w = 0; w < cli.warmup_iterations; ++w) {
             run_launch(plan, cli.iterations, RunMode::kTimed, reservation, start, stop, true, false,
@@ -1555,10 +1186,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Step 4: measured repetitions. Every repetition executes all four
-    // configurations; even repetitions run them in canonical order and odd
-    // repetitions in the exact reverse, so neither UMMA method is always
-    // measured first as the device heats up or its clocks drift.
     RowContext ctx;
     ctx.campaign_kind = cli.campaign_kind;
     ctx.run_kind = cli.run_kind;
@@ -1567,13 +1194,11 @@ int main(int argc, char** argv) {
     ctx.repetitions = cli.repetitions;
     ctx.hardware_sm_count = gpu.multi_processor_count;
     ctx.shared_memory_reservation_bytes = static_cast<int64_t>(reservation);
-    ctx.gpu = gpu;
-    ctx.git_commit = git_commit_hash();
-    ctx.git_dirty = git_dirty_flag();
 
     print_csv_header();
     int64_t execution_order = 0;
     for (int64_t rep = 0; rep < cli.repetitions; ++rep) {
+        // Alternate launch order to reduce thermal and clock-order bias.
         const bool forward = (rep % 2 == 0);
         for (int step = 0; step < kPlanCount; ++step) {
             const int index = forward ? step : (kPlanCount - 1 - step);

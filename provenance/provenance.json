@@ -1,105 +1,24 @@
 {
-  "schema_version": "gb300-publication.v1",
-  "repository_name": "gb300-microbench",
-  "scientific_origin": {
-    "repository": "https://github.com/Antoniomv7/gb300-gemm-anatomy",
-    "frozen_commit": "86f2382fb92a957035c067ae725e9e25afacab6f"
-  },
+  "source_repository": "https://github.com/Antoniomv7/gb300-gemm-anatomy",
+  "source_commit": "86f2382fb92a957035c067ae725e9e25afacab6f",
   "hardware": {
-    "name": "NVIDIA B300 SXM6 AC",
+    "gpu": "NVIDIA B300 SXM6 AC",
     "uuid": "GPU-40e00845-d89c-1393-2c32-a2dca3ee9442",
     "compute_capability": "10.3",
+    "sm_count": 148,
     "driver_version": "610.43.02"
   },
-  "container_image": {
-    "id": "sha256:54b10f0ccd3bd6121bd0b73bd883082d7c560248aa3d76ef77769660dd5fd4f4",
-    "tag": "gb300-microbench:latest"
+  "published_campaigns": {
+    "memory_umma_gemm": [
+      "20260822T222634Z",
+      "20260822T223050Z",
+      "20260822T223504Z"
+    ],
+    "umma_device_scaling": [
+      "20260824T122229Z",
+      "20260824T122239Z",
+      "20260824T122247Z"
+    ]
   },
-  "campaigns": {
-    "primary": {
-      "final": [
-        "20260822T222634Z",
-        "20260822T223050Z",
-        "20260822T223504Z"
-      ],
-      "execution_commit": "1f27767ec9af121103b6d489592a9fd9052bb1b4",
-      "analysis_manifest_sha256": "1fce4eadaf9fc14c548c70128bbcee9979d73a34a7b629a985c9883c0a120a9b",
-      "campaign_manifest_sha256": {
-        "20260822T222634Z": "39a40ba223a2f2b429059b88e57c1974cae2b03f5a4015b2a5a8646c90d7c533",
-        "20260822T223050Z": "aeb788aca4794439075ad9f22ccbb3d683effaf9327748f3e8f0daaaac9e7227",
-        "20260822T223504Z": "72f6b08a0686911e23c4f8c84b6c35e9490b201f02e946c42fb3ffb54dd9bf3e"
-      }
-    },
-    "umma_device_scaling": {
-      "final": [
-        "20260824T122229Z",
-        "20260824T122239Z",
-        "20260824T122247Z"
-      ],
-      "execution_commit": "060c4aeec4598babf3701c0dcfb74ea15f828585",
-      "analysis_manifest_sha256": "244b93cac3f0f7b6e254867b8a281e70a1e65282288d3bc1ba2a284597283b6b",
-      "campaign_manifest_sha256": {
-        "20260824T122229Z": "8b1afdc4c149205f9df5f5ae91880ef927122cd56ad69c738da442e49efc96e0",
-        "20260824T122239Z": "abc9e4765437ef6d56d7bf85079eb78db4de477f46739a525f7783b1411d7606",
-        "20260824T122247Z": "412a7b01ca3055bffedcc4aea99ca936c5abc217cd181bff2de3dad9b07432bf"
-      },
-      "excluded_pilot": "20260824T122221Z"
-    }
-  },
-  "published_artifact_sha256": {
-    "results/memory_paths.csv": "63dd075aa151de01d496d55bd9cb61e382c18c22f3f5ab3457acdbee58797201",
-    "results/umma_throughput.csv": "e920802c1a7be8ab7794eaf66879c604ce06982d8f16b1f460354269e7c180e3",
-    "results/gemm_comparison.csv": "d53c6a842eb51b3b4efffef237df9b6f2944708e8948a3be50b0608debc21fe4",
-    "results/umma_device_scaling.csv": "2ffc8073227c6692905b2d0e78f5912f7f4667398cd6bd98d95f2918c06b51e4",
-    "results/figures/memory_paths.svg": "6fe01d7cf1f2019fea719d1a4dfe6eb98abf9e38cfc0f14f13416d367e6409b4",
-    "results/figures/umma_throughput.svg": "b26de0bc3b641b3d7654f5e38784a0605db43f2fcaef3d8a778607c1ca212a38",
-    "results/figures/gemm_comparison.svg": "25418f34346129635318ffd5117f64a5d03a3c201658c144d75082110bcc4a90",
-    "results/figures/umma_device_scaling.svg": "0554b0d31d7a67ccf443a53bac5fc21fd2b189ff1f9d4df356fa977c16257fd7"
-  },
-  "original_source_identity": {
-    "memory_paths/ldgsts.cu": {
-      "git_blob": "89e9d792eb0d231a925b04c9acec0e765770c44e",
-      "original_sha256": "ff37015e31282a731748377e7305f8bae412ef7f0d5d43505e6573299c85ae52",
-      "publication_sha256": "b76552ef23b072bff2c45526dcd5c6be943a5a236758ebc89af617b9ae2b2167",
-      "change": "Comments only; executable token stream and inline PTX are unchanged."
-    },
-    "memory_paths/tma.cu": {
-      "git_blob": "18952024165713105aa8ca41c3fb5e0306563282",
-      "original_sha256": "21e1b647098730a0c5d2f0d0e19c2bd40945d082484bb3a6626cc13418d67423",
-      "publication_sha256": "7e266f2835393364342794317d0d7fce5107923a17e147ac39dfd70be5eef10b",
-      "change": "Comments only; executable token stream and inline PTX are unchanged."
-    },
-    "umma_throughput/umma_1sm.cu": {
-      "git_blob": "99d232f4cb5df18c229d1fedd92fdaa7bab8155f",
-      "original_sha256": "40a9b4a150b3b07d142ba35a4ee2027db0efff116507a2935a14310475b3e52b",
-      "publication_sha256": "2149344f2f7af0edf8334ec75312bd056306d2993592a0469e4b0fe9915ec229",
-      "change": "Comments only; executable token stream and inline PTX are unchanged."
-    },
-    "umma_throughput/umma_2sm.cu": {
-      "git_blob": "f645ebaf6dd80c06a5770c814530ec2de76db95b",
-      "original_sha256": "8a9a75c6bb5627a6950c969ee57b44fb3befc2f2d91cc1c070e29b5a29a9497a",
-      "publication_sha256": "ff67463eb91478977f63f89f2c15ed05f47ab439ad454292623bef775dc8076b",
-      "change": "Comments only; executable token stream and inline PTX are unchanged."
-    },
-    "gemm_comparison/cublaslt_bridge.cu": {
-      "original_path": "src/gemm/cublaslt_bridge_p35.cu",
-      "git_blob": "356ed8de471ae97cc7b47fcd50c4b3e51a6e6835",
-      "original_sha256": "2587a71d7603fdc5d340624dfd3c343dc8dd89bf1ba790cf7655e4217fa4ecb5",
-      "publication_sha256": "139c6a27d0d4791005bbe9bf5259262ed173f95815021f29bf24d0b1eb75edc5",
-      "change": "Comments only; executable token stream is unchanged."
-    },
-    "gemm_comparison/gemm_comparison.py": {
-      "original_path": "src/gemm/gemm_comparison.py",
-      "git_blob": "82d5cfdd1361b373786fe87099de23d4bcb81074",
-      "original_sha256": "3e6f2d4fd05cd648402a5389f0ed6a728a64eea202cb4a5688ab2514d1599737",
-      "publication_sha256": "1d73709e95c0d9f2bf8df6f8be792153e051a8b84d7eb93bb832132b6456b457",
-      "change": "Repository-path adaptation retained; comments and the unused GPU-free self-test were removed. The production measurement path is unchanged."
-    }
-  },
-  "preserved_sass_sha256": {
-    "artifacts/sass/ldgsts.sass": "9980ad7cc06d2975237abffe7ecd0ab52dec500dcfbd37a6d5c8288c8855fc8b",
-    "artifacts/sass/tma.sass": "3d4a196640348f3c8875cdbf4f88414cdb209414d68a3cb00b8480c9f55bb086",
-    "artifacts/sass/umma_1sm.sass": "7d3a95f93381bf55e539b759491aa15ed9c9558855f4bf3549f4c2867e34eed7",
-    "artifacts/sass/umma_2sm.sass": "47c02bc38eb38c705619a71f12c818f1e8a07300e6e0e14988a8d54b03e1b1b7"
-  }
+  "historical_sass_commit": "de8bcd59bf1debf9fcff234a154954cf90aee422"
 }

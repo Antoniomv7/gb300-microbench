@@ -8,11 +8,11 @@ NVCCFLAGS ?= -std=c++17 -O3 -lineinfo
 .PHONY: all sass clean
 all: $(BUILD_DIR)/ldgsts $(BUILD_DIR)/tma
 
-$(BUILD_DIR)/ldgsts: ldgsts.cu Makefile ../VERSIONS.env
+$(BUILD_DIR)/ldgsts: ldgsts.cu ../benchmark_common.cuh Makefile ../VERSIONS.env
 	@mkdir -p $(BUILD_DIR)
 	$(NVCC) $(NVCCFLAGS) -arch=$(ARCH) -o $@ $<
 
-$(BUILD_DIR)/tma: tma.cu Makefile ../VERSIONS.env
+$(BUILD_DIR)/tma: tma.cu ../benchmark_common.cuh Makefile ../VERSIONS.env
 	@mkdir -p $(BUILD_DIR)
 	$(NVCC) $(NVCCFLAGS) -arch=$(ARCH) -o $@ $<
 

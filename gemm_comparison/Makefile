@@ -2,8 +2,8 @@ NVCC ?= nvcc
 PYTHON ?= python3
 ARCH ?= sm_103a
 VIRTUAL_ARCH := compute_$(patsubst sm_%,%,$(ARCH))
-BRIDGE_DIR ?= /tmp/p35-bridge
-BRIDGE_LIB := $(BRIDGE_DIR)/libp35_cublaslt_bridge.so
+BRIDGE_DIR ?= /tmp/gb300-cublaslt
+BRIDGE_LIB := $(BRIDGE_DIR)/libcublaslt_bridge.so
 OUTPUT ?= ../runs/gemm_comparison.csv
 WARMUP ?= 2
 ITERATIONS ?= 10
@@ -19,4 +19,3 @@ run: bridge
 	@mkdir -p $(dir $(OUTPUT))
 	$(PYTHON) gemm_comparison.py --warmup-iterations $(WARMUP) \
 		--iterations $(ITERATIONS) > $(OUTPUT)
-
