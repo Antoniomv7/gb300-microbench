@@ -13,6 +13,7 @@ The CUDA sources are preserved with identical executable code: every identifier,
 | `memory_paths/` | How do equivalent LDGSTS and 2D unicast TMA paths behave over the tested pipeline grid? | `ldgsts.cu`, `tma.cu` |
 | `umma_throughput/` | How do 1-SM and 2-SM BF16 `tcgen05.mma` kernels scale with N and instruction depth? | `umma_1sm.cu`, `umma_2sm.cu` |
 | `gemm_comparison/` | How closely do three official CuTe DSL execution variants approach cuBLASLt on five shapes? | `gemm_comparison.py`, `cublaslt_bridge.cu` |
+| `umma_throughput/` (supplementary) | How do the same 1-SM and 2-SM UMMA execution modes behave when replicated across the whole usable SM capacity? | `umma_device_scaling.cu`, `device_scaling.py` |
 
 The CUDA kernels retain their integrated numerical validation. The GEMM comparison validates every candidate against one FP32 reference before timing it.
 
@@ -165,6 +166,96 @@ make gemm-run
 
 The launcher exposes only the requested GPU and refuses to run while it has an active compute process.
 
+## Supplementary experiment: UMMA launch scale
+
+The frozen `umma_throughput/` experiment varies the **instruction** dimension — `tcgen05.mma.cta_group::1` against `tcgen05.mma.cta_group::2`, swept over N and instruction depth — always on one CTA or one two-CTA cluster. This supplementary experiment varies a second, orthogonal dimension, **launch scale**, and holds the instruction dimension fixed at the already-identified ceiling shape `N=256`, depth `256`.
+
+"All SM" is not a third UMMA instruction. PTX provides exactly two CTA groups, `cta_group::1` and `cta_group::2`; there is no whole-device UMMA opcode. The four configurations are two instruction modes crossed with two launch scales:
+
+| Method | Scale | Launch | Work unit |
+|---|---|---|---|
+| `umma_1sm` | `isolated` | one CTA | one `128x256x16` UMMA |
+| `umma_2sm` | `isolated` | one two-CTA cluster | one joint `256x256x16` UMMA |
+| `umma_1sm` | `device_scale` | one CTA per usable SM | one `128x256x16` UMMA per SM |
+| `umma_2sm` | `device_scale` | every simultaneously resident two-CTA cluster | one joint `256x256x16` UMMA per cluster |
+
+Both launch scales are measured inside the **same** campaign, so every scaling efficiency is computed against an isolated baseline taken on the same GPU, at the same commit, minutes apart — never against a historical run at another commit.
+
+`umma_device_scaling.cu` reuses the instruction descriptors, K-major shared-memory packing, TMEM allocate/fence/commit/wait/readback/deallocate/relinquish lifecycle, cluster-wide `cta_group::2` synchronization, validation pattern and per-work-unit operation count of the corresponding `N=256`, depth `256` frozen kernels. Only the launch geometry, the per-work-unit output indexing, the residency/SM-id diagnostics and the host timing differ. The frozen `umma_1sm.cu`, `umma_2sm.cu`, `benchmark.py`, the 24-configuration contract, `analysis/analyze.py` and `results/new` are untouched, and the new binary is a separate `make` goal so `make build` and `make sass` behave exactly as before.
+
+### What it is, and what it is not
+
+Device-scale UMMA is still a compute-focused microbenchmark: A and B are already resident in shared memory and stay there for the whole measured loop. It is **not** a full GEMM, **not** an HBM or DRAM-bandwidth benchmark, and **not** an NVIDIA architectural peak claim. The reported TFLOP/s comes from validated operation counts divided by whole-kernel CUDA-event time.
+
+### How coverage is established
+
+The SM count comes from `cudaGetDeviceProperties()` at run time and is recorded in every row; 148 SMs is never hardcoded, because Blackwell Ultra SKUs may expose a different count.
+
+Each kernel is launched with a dynamic shared-memory reservation derived from the device's own `sharedMemPerMultiprocessor`, large enough that two CTAs cannot share an SM. `cudaOccupancyMaxActiveBlocksPerMultiprocessor` must then confirm exactly one resident CTA per SM, or the binary refuses to run — one CTA per SM is also what keeps two 256-column Tensor Memory allocations off the same SM. For the 2-SM arm, `cudaOccupancyMaxActiveClusters` gives the resident-cluster capacity and the grid is `2 x min(floor(SMs / 2), max_active_clusters)`, always an even number of blocks.
+
+A matching grid alone is not treated as proof. Before any measurement, each configuration runs one untimed **residency probe** launch of the same kernel with the same geometry and reservation: every block arrives at a global counter and then spins, bounded by its own deadline, until it observes every other block having arrived. If all blocks report success then no block had exited when the last one arrived, so all of them were simultaneously resident. A timeout is recorded, never hidden, and never becomes a hang. Every launch also records the `%smid` of each block into an array indexed by **block position**, never by `%smid` itself, since SM IDs are not guaranteed to be contiguous.
+
+Each row therefore carries `coverage_status`:
+
+- `full_device_coverage` — residency proven, observed unique SMs equal the planned count, and the planned count equals the hardware SM count;
+- `maximum_resident_coverage` — residency proven and fully observed, but fewer SMs than the device has (an odd SM count, or a cluster-occupancy limit); the unused SMs are reported in `unused_sm_count`;
+- `incomplete_coverage` — residency or SM observation fell short; the analyzer refuses such a campaign rather than calling it "all SM";
+- `isolated_unit` — the two isolated configurations.
+
+### Timing
+
+`%clock64` is a per-SM counter and is never the primary timer here. Every published sample is a whole-kernel CUDA-event interval: buffers and events are created first, the device is synchronized, the interval encloses exactly one kernel launch, and the readback plus host validation happen after it. Warm-up launches are discarded. Per-work-unit `%clock64` values survive only as the `diagnostic_clock64_cycles_min`/`_max` columns.
+
+Each repetition executes all four configurations; even repetitions use the canonical order and odd repetitions the exact reverse, so neither UMMA method is always measured first as the device heats up. Every row records its own `execution_order`.
+
+Correctness is mandatory: the whole output of every block or cluster is validated against a CPU reference before any measurement and again after every measured repetition, outside the timed interval. Any mismatch aborts before a timing row is written.
+
+### Build, smoke, collect, analyze
+
+```bash
+make umma-scaling-build          # compiles only build/umma_throughput/umma_device_scaling
+make umma-scaling-check          # GPU-free: syntax, CLI and synthetic analyzer tests
+```
+
+`make umma-scaling-sass` disassembles the new binary into `build/sass/`.
+
+Then choose one idle physical GPU and run the short validation:
+
+```bash
+export BLACKWELL_GPU_INDEX=7
+make umma-scaling-smoke
+```
+
+The smoke runs the four-configuration `--self-test` and then a short measured run; it is never part of a statistic. As with the primary campaigns, **commit the repository before collecting evidence** — every campaign requires a clean worktree and records the commit in every row.
+
+```bash
+make umma-scaling-campaign UMMA_SCALING_KIND=pilot
+make umma-scaling-campaign UMMA_SCALING_KIND=final
+make umma-scaling-campaign UMMA_SCALING_KIND=final
+make umma-scaling-campaign UMMA_SCALING_KIND=final
+```
+
+Each invocation creates `runs/umma_device_scaling/<UTC-ID>/` with `raw/umma_device_scaling.csv`, a manifest and `SHA256SUMS`. One campaign is 4 configurations x 30 repetitions = 120 rows, at 1000 outer iterations and 10 warm-up launches, and is accepted only if the four-configuration matrix is exact, every device-scale row has proven coverage, correctness is clean and every row carries the expected clean commit and GPU UUID. The raw schema is separate from `umma_throughput.csv`; nothing is appended to the frozen dataset.
+
+```bash
+make umma-scaling-analyze \
+  UMMA_SCALING_FINALS="20260901T090000Z 20260901T100000Z 20260901T110000Z" \
+  UMMA_SCALING_ANALYSIS_OUT=results/umma_device_scaling/20260901T120000Z
+```
+
+The analyzer takes exactly three distinct final campaigns and requires one shared commit, GPU, container image, parameter set and launch geometry. It reduces each campaign's 30 repetitions to a median first and only then computes mean, median, sample standard deviation, minimum, maximum and CV across the three campaign-level medians; the 90 repetitions are never pooled as independent campaigns, and three campaigns support descriptive statistics, not significance testing. Scaling efficiency is computed separately per method, each against its own isolated baseline:
+
+- 1-SM: `device_total / (isolated_1sm x active_1sm_blocks)`
+- 2-SM: `device_total / (isolated_2sm x active_2sm_clusters)`
+
+It also reports both device-scale totals, the `2sm / 1sm` total and per-active-SM ratios, and each method's gap from its own ideal linear projection. Values are never clamped, and totals are never compared without exposing the active-SM counts behind them: an unequal count sets `equal_active_sm_coverage` to false and raises a warning. Output goes to a separate location, `results/umma_device_scaling/<analysis-id>`, and never overwrites `results/new`; it contains a summary CSV, `summary.json`, one SVG figure with the isolated totals, device-scale totals and scaling efficiency on separate scales, a manifest and `SHA256SUMS`.
+
+No measured numbers are quoted here: the supplementary population has not yet been collected under a clean commit on the GB300.
+
+### Relating this to the GEMM comparison
+
+The device-scale figure is an instruction-issue ceiling with operands already in shared memory and nothing else competing. `gemm_comparison/` measures complete GEMMs, including operand movement, tiling, scheduling and epilogue. The useful relation is a fraction — how much of the device-scale UMMA ceiling a real GEMM converts — and it is only meaningful when both come from the same GPU, driver, container image and commit, and are reported as two different measurements rather than one number. It bounds the headroom; it does not attribute any GEMM gap to memory, Tensor Cores, scheduling, or any other single cause, and it is not a roofline.
+
 ## Reference provenance
 
 - final campaigns: `20260817T110330Z`, `20260817T111310Z`, `20260817T112011Z`;
@@ -185,6 +276,7 @@ New campaign manifests supersede this reference for the thesis dataset. The refe
 - The new UMMA analysis reports clock-independent FLOP/cycle/SM, not a measured whole-device peak.
 - All GEMM measurements are hot-cache and lack GEMM-level profiling.
 - The tested grids ended before a clear memory or UMMA plateau was observed.
+- Launch scale is not a third UMMA instruction; the supplementary experiment crosses the two PTX CTA groups with two launch scales and makes no whole-device peak claim.
 
 ## License
 

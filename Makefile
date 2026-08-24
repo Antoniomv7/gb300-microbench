@@ -15,10 +15,24 @@ FINAL_CAMPAIGNS ?=
 ANALYSIS_OUT ?= results/new
 NCU_GATE_ID := ncu-gate-$(shell date -u +%Y%m%dT%H%M%SZ)
 NCU_GATE_DIR ?= runs/$(NCU_GATE_ID)
+
+# Supplementary UMMA launch-scale experiment. It has its own campaign root,
+# its own raw CSV schema and its own results location, so it can never be
+# mixed with the closed three-experiment population under runs/<UTC-ID>/ and
+# results/new.
+UMMA_SCALING_ROOT ?= runs/umma_device_scaling
+UMMA_SCALING_KIND ?= final
+UMMA_SCALING_ID ?=
+UMMA_SCALING_FINALS ?=
+UMMA_SCALING_ANALYSIS_OUT ?= results/umma_device_scaling/latest
+UMMA_SCALING_SMOKE_ID := smoke-$(shell date -u +%Y%m%dT%H%M%SZ)
+UMMA_SCALING_SMOKE_DIR ?= $(UMMA_SCALING_ROOT)/$(UMMA_SCALING_SMOKE_ID)
 export IMAGE_TAG
 
 .DEFAULT_GOAL := help
-.PHONY: help image build sass smoke smoke-verify ncu-check memory-run umma-run gemm-run campaign analyze clean
+.PHONY: help image build sass smoke smoke-verify ncu-check memory-run umma-run gemm-run campaign analyze clean \
+        umma-scaling-build umma-scaling-sass umma-scaling-check umma-scaling-smoke \
+        umma-scaling-campaign umma-scaling-analyze
 
 help:
 	@echo "make image       Build the pinned CUDA/CuTe DSL image"
@@ -33,6 +47,14 @@ help:
 	@echo "make ncu-check   Require one real, parsed Nsight Compute capture"
 	@echo "make campaign    Freeze one pilot/final campaign under runs/<UTC-ID>/"
 	@echo "make analyze     Aggregate exactly three explicit final campaigns"
+	@echo ""
+	@echo "Supplementary UMMA launch-scale experiment (isolated vs device scale):"
+	@echo "make umma-scaling-build     Compile only the device-scaling binary"
+	@echo "make umma-scaling-sass      Disassemble the device-scaling binary"
+	@echo "make umma-scaling-check     GPU-free syntax, CLI and analyzer tests"
+	@echo "make umma-scaling-smoke     Self-test plus a short four-configuration GPU run"
+	@echo "make umma-scaling-campaign  Freeze one pilot/final supplementary campaign"
+	@echo "make umma-scaling-analyze   Aggregate exactly three final supplementary campaigns"
 	@echo ""
 	@echo "MEMORY_OUT, UMMA_OUT, GEMM_OUT, SMOKE_DIR and ANALYSIS_OUT are all relative"
 	@echo "to this repository root. GEMM_OUT included: the '../' that gemm_comparison/"
@@ -110,6 +132,51 @@ analyze:
 	python3 analysis/analyze.py \
 		$(foreach id,$(FINAL_CAMPAIGNS),--campaign "$(CAMPAIGN_ROOT)/$(id)") \
 		--output "$(ANALYSIS_OUT)"
+
+# --- Supplementary UMMA launch-scale experiment -----------------------------
+# `build` and `sass` above stay exactly as they were: the device-scaling binary
+# is a separate goal of umma_throughput/Makefile, so the frozen campaign
+# contract's build behaviour is unchanged.
+
+umma-scaling-build:
+	@mkdir -p build/umma_throughput build/sass
+	docker run --rm --network none --security-opt no-new-privileges --cap-drop ALL \
+		--user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+		-v "$(CURDIR):/workspace" -w /workspace "$(IMAGE_TAG)" \
+		bash -c 'make -C umma_throughput ARCH="$(CUDA_ARCH)" scaling'
+
+umma-scaling-sass: umma-scaling-build
+	docker run --rm --network none --security-opt no-new-privileges --cap-drop ALL \
+		--user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+		-v "$(CURDIR):/workspace" -w /workspace "$(IMAGE_TAG)" \
+		bash -c 'make -C umma_throughput ARCH="$(CUDA_ARCH)" scaling-sass'
+
+umma-scaling-check:
+	python3 -m py_compile umma_throughput/device_scaling.py \
+		scripts/run_umma_scaling_campaign.py analysis/analyze_umma_device_scaling.py \
+		tests/test_umma_device_scaling.py
+	python3 analysis/analyze_umma_device_scaling.py --help >/dev/null
+	python3 tests/test_umma_device_scaling.py
+
+umma-scaling-smoke: umma-scaling-build
+	@test ! -e "$(UMMA_SCALING_SMOKE_DIR)" || { \
+		echo "smoke output already exists: $(UMMA_SCALING_SMOKE_DIR)" >&2; exit 2; }
+	@mkdir -p "$(UMMA_SCALING_SMOKE_DIR)"
+	scripts/run_gpu.sh build/umma_throughput/umma_device_scaling --self-test
+	python3 umma_throughput/device_scaling.py --run-kind smoke \
+		--output "$(UMMA_SCALING_SMOKE_DIR)/umma_device_scaling.csv"
+
+umma-scaling-campaign: umma-scaling-build
+	python3 scripts/run_umma_scaling_campaign.py --kind "$(UMMA_SCALING_KIND)" \
+		--output-root "$(UMMA_SCALING_ROOT)" \
+		$(if $(strip $(UMMA_SCALING_ID)),--campaign-id "$(UMMA_SCALING_ID)")
+
+umma-scaling-analyze:
+	@test "$(words $(UMMA_SCALING_FINALS))" -eq 3 || { \
+		echo "UMMA_SCALING_FINALS must contain exactly three campaign IDs" >&2; exit 2; }
+	python3 analysis/analyze_umma_device_scaling.py \
+		$(foreach id,$(UMMA_SCALING_FINALS),--campaign "$(UMMA_SCALING_ROOT)/$(id)") \
+		--output "$(UMMA_SCALING_ANALYSIS_OUT)"
 
 define SMOKE_VERIFY_PY
 import csv, sys

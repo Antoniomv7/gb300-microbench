@@ -5,6 +5,10 @@ runs/
 # untracked or the next `make campaign` aborts on a dirty worktree.
 results/new/
 results/new.partial/
+# The supplementary UMMA device-scaling analysis writes here; like
+# results/new/ it must stay untracked so the next campaign does not abort
+# on a dirty worktree.
+results/umma_device_scaling/
 __pycache__/
 *.py[cod]
 .DS_Store
