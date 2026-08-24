@@ -23,6 +23,9 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+import run_umma_scaling_campaign as contract  # noqa: E402
+
 ANALYZER = ROOT / "analysis" / "analyze_umma_device_scaling.py"
 SOURCE = ROOT / "umma_throughput" / "umma_device_scaling.cu"
 
@@ -210,7 +213,7 @@ def freeze(directory: Path, rows: list[dict[str, str]], *, campaign_id: str, com
         "row_counts": {"umma_device_scaling": len(rows)},
         "artifact_sha256": {"raw/umma_device_scaling.csv":
                             sha256_file(raw) if rehash else "0" * 64},
-        "source_sha256": {"umma_throughput/umma_device_scaling.cu": "d" * 64},
+        "source_sha256": {relative: "d" * 64 for relative in contract.SOURCE_FILES},
     }
     (directory / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -358,6 +361,50 @@ def case_wrong_sample_count(work: Path) -> None:
                     "sample indexes are not exactly 0..29")
 
 
+def case_invalid_experimental_contract(work: Path) -> None:
+    cases = (
+        ("fabricated throughput is rejected", "total_tflops", "20000.000000",
+         "total_tflops does not match"),
+        ("incorrect FLOP accounting is rejected", "total_flops", "1",
+         "total_flops does not match"),
+        ("incorrect matrix dimension is rejected", "m", "64", "m must be 256"),
+        ("incorrect iteration count is rejected", "iterations", "1", "iterations must be 1000"),
+        ("incorrect warm-up count is rejected", "warmup_iterations", "0",
+         "warmup_iterations must be 10"),
+        ("false full-device coverage is rejected", "coverage_status", "full_device_coverage",
+         "coverage_status does not match active SM count"),
+    )
+    for index, (name, field, value, fragment) in enumerate(cases):
+        root = work / f"invalid_contract_{index}"
+        campaigns = build_population(root, sm_count=147 if field == "coverage_status" else 148)
+        raw = campaigns[0] / "raw" / "umma_device_scaling.csv"
+        rows = list(csv.DictReader(raw.open()))
+        rows[3][field] = value
+        freeze(campaigns[0], rows, campaign_id=campaigns[0].name, commit=COMMIT_A, gpu=GPU_A)
+        expect_rejected(name, root, campaigns, fragment)
+
+    root = work / "invalid_manifest_repetitions"
+    campaigns = build_population(root)
+    rows = [row for row in csv.DictReader((campaigns[0] / "raw" / "umma_device_scaling.csv").open())
+            if row["sample_index"] == "0"]
+    for row in rows:
+        row["repetitions"] = "1"
+    freeze(campaigns[0], rows, campaign_id=campaigns[0].name, commit=COMMIT_A, gpu=GPU_A)
+    manifest_path = campaigns[0] / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["parameters"]["repetitions"] = 1
+    manifest_path.write_text(json.dumps(manifest))
+    expect_rejected("one-repetition final campaign is rejected", root, campaigns, "frozen contract")
+
+    root = work / "missing_source_provenance"
+    campaigns = build_population(root)
+    manifest_path = campaigns[0] / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["source_sha256"] = {}
+    manifest_path.write_text(json.dumps(manifest))
+    expect_rejected("missing source provenance is rejected", root, campaigns, "source inventory")
+
+
 def case_mixed_commit(work: Path) -> None:
     root = work / "mixed_commit"
     campaigns = build_population(root)
@@ -481,7 +528,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="umma-scaling-tests-") as name:
         work = Path(name)
         for case in (case_valid, case_missing_configuration, case_duplicate_sample,
-                     case_wrong_sample_count, case_mixed_commit, case_mixed_gpu,
+                     case_wrong_sample_count, case_invalid_experimental_contract,
+                     case_mixed_commit, case_mixed_gpu,
                      case_hash_mismatch, case_correctness_failure, case_incomplete_coverage,
                      case_unproven_residency, case_odd_sm_count, case_population_shape,
                      case_cli):

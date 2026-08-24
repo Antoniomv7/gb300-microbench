@@ -95,8 +95,16 @@ def campaign(path: Path) -> dict:
         raise AnalysisError(f"{path}: missing GPU identity")
     if not isinstance(image, dict) or not isinstance(image.get("id"), str):
         raise AnalysisError(f"{path}: missing container image identity")
-    if not isinstance(parameters, dict) or not isinstance(parameters.get("repetitions"), int):
-        raise AnalysisError(f"{path}: missing parameter block")
+    if parameters != contract.FROZEN_PARAMETERS:
+        raise AnalysisError(f"{path}: benchmark parameters do not match the frozen contract")
+    sources = manifest.get("source_sha256")
+    if (
+        not isinstance(sources, dict)
+        or set(sources) != set(contract.SOURCE_FILES)
+        or any(not isinstance(value, str) or not contract.SHA256_RE.fullmatch(value)
+               for value in sources.values())
+    ):
+        raise AnalysisError(f"{path}: source inventory or SHA-256 digests are not exact")
 
     recorded = manifest.get("artifact_sha256")
     if not isinstance(recorded, dict) or set(recorded) != set(contract.RAW_FILES):

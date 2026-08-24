@@ -86,6 +86,18 @@ REQUIRED_FIELDS = frozenset(CONSTANT_FIELDS) | {
 }
 
 FROZEN_LABELS = {"operand_path": "smem_smem", "input_type": "bf16", "accumulator_type": "fp32"}
+FROZEN_PARAMETERS = {
+    "n": FROZEN_N,
+    "k": FROZEN_K,
+    "depth": FROZEN_DEPTH,
+    "threads_per_cta": FROZEN_THREADS_PER_CTA,
+    "iterations": BENCHMARK_ITERATIONS,
+    "warmup_iterations": BENCHMARK_WARMUP,
+    "repetitions": BENCHMARK_REPETITIONS,
+    "configuration_count": len(CONFIGURATIONS),
+    **FROZEN_LABELS,
+    "timing_source": "cuda_event_whole_kernel",
+}
 
 COVERAGE_ACCEPTED = ("full_device_coverage", "maximum_resident_coverage")
 
@@ -223,6 +235,8 @@ def validate_scaling_csv(
     path: Path, *, commit: str, gpu_uuid: str, campaign_kind: str, repetitions: int
 ) -> dict:
     """Validates the exact four-configuration matrix and returns its facts."""
+    if repetitions != BENCHMARK_REPETITIONS:
+        raise ScalingCampaignError(f"{path}: repetitions must be frozen at {BENCHMARK_REPETITIONS}")
     fields, rows = read_csv(path)
     missing = sorted(REQUIRED_FIELDS - set(fields))
     if missing:
@@ -231,7 +245,6 @@ def validate_scaling_csv(
     expected = set(CONFIGURATIONS)
     samples: dict[tuple[str, str], set[int]] = {key: set() for key in expected}
     constants: dict[tuple[str, str], dict[str, str]] = {}
-    orders: list[int] = []
     for number, row in enumerate(rows, 2):
         where = f"{path}:{number}"
         if row["schema_version"] != ROW_SCHEMA:
@@ -260,7 +273,10 @@ def validate_scaling_csv(
         if sample in samples[key]:
             raise ScalingCampaignError(f"{path}: duplicate sample {key + (sample,)}")
         samples[key].add(sample)
-        orders.append(integer(row, "execution_order", path))
+        position = CONFIGURATIONS.index(key)
+        step = position if sample % 2 == 0 else len(CONFIGURATIONS) - position - 1
+        if integer(row, "execution_order", path) != sample * len(CONFIGURATIONS) + step:
+            raise ScalingCampaignError(f"{where}: execution_order does not alternate by repetition")
 
         if integer(row, "n", path) != FROZEN_N or integer(row, "k", path) != FROZEN_K:
             raise ScalingCampaignError(f"{where}: N/K are not the frozen {FROZEN_N}/{FROZEN_K}")
@@ -268,19 +284,76 @@ def validate_scaling_csv(
             raise ScalingCampaignError(f"{where}: depth is not the frozen {FROZEN_DEPTH}")
         if integer(row, "threads_per_cta", path) != FROZEN_THREADS_PER_CTA:
             raise ScalingCampaignError(f"{where}: threads_per_cta is not {FROZEN_THREADS_PER_CTA}")
+        group = 1 if row["method"] == "umma_1sm" else 2
+        for field, expected_value in (
+            ("m", 128 * group),
+            ("iterations", BENCHMARK_ITERATIONS),
+            ("warmup_iterations", BENCHMARK_WARMUP),
+            ("umma_per_work_unit_per_iteration", FROZEN_DEPTH),
+        ):
+            if integer(row, field, path) != expected_value:
+                raise ScalingCampaignError(f"{where}: {field} must be {expected_value}")
         for label, expected_value in FROZEN_LABELS.items():
             if row[label] != expected_value:
                 raise ScalingCampaignError(
                     f"{where}: {label} is {row[label]!r}, expected {expected_value!r}")
-        if integer(row, "cta_group", path) != (1 if row["method"] == "umma_1sm" else 2):
+        if integer(row, "cta_group", path) != group:
             raise ScalingCampaignError(f"{where}: method/cta_group mismatch")
         if integer(row, "occupancy_blocks_per_sm", path) != 1:
             raise ScalingCampaignError(f"{where}: occupancy is not one resident CTA per SM")
         if integer(row, "repetitions", path) != repetitions:
             raise ScalingCampaignError(f"{where}: repetitions column does not match {repetitions}")
-        finite_positive(row, "kernel_time_ms", path)
-        finite_positive(row, "total_tflops", path)
-        finite_positive(row, "tflops_per_planned_active_sm", path)
+
+        hardware = integer(row, "hardware_sm_count", path)
+        planned = integer(row, "planned_active_sm_count", path)
+        observed = integer(row, "observed_unique_sm_count", path)
+        work_units = integer(row, "work_unit_count", path)
+        if (
+            not 1 <= planned <= hardware
+            or not 0 <= observed <= planned
+            or integer(row, "grid_blocks", path) != planned
+            or integer(row, "cluster_size", path) != group
+            or planned != work_units * group
+            or integer(row, "unused_sm_count", path) != hardware - planned
+        ):
+            raise ScalingCampaignError(f"{where}: inconsistent launch geometry or SM coverage")
+        if group == 1:
+            if (
+                row["cluster_count"] != "not_applicable"
+                or row["max_active_clusters"] != "not_applicable"
+            ):
+                raise ScalingCampaignError(f"{where}: 1-SM launch cannot declare clusters")
+        else:
+            max_clusters = integer(row, "max_active_clusters", path)
+            if integer(row, "cluster_count", path) != work_units or max_clusters < work_units:
+                raise ScalingCampaignError(f"{where}: inconsistent 2-SM cluster geometry")
+        if row["scale"] == "isolated" and work_units != 1:
+            raise ScalingCampaignError(f"{where}: isolated launch must contain one work unit")
+        if row["scale"] == "device_scale" and work_units != (
+            hardware if group == 1 else min(hardware // 2, max_clusters)
+        ):
+            raise ScalingCampaignError(f"{where}: device launch does not use maximum resident coverage")
+
+        flops_per_umma = 2 * (128 * group) * FROZEN_N * FROZEN_K
+        total_umma = FROZEN_DEPTH * BENCHMARK_ITERATIONS * work_units
+        total_flops = flops_per_umma * total_umma
+        for field, expected_value in (
+            ("flops_per_umma", flops_per_umma),
+            ("total_umma_count", total_umma),
+            ("total_flops", total_flops),
+        ):
+            if integer(row, field, path) != expected_value:
+                raise ScalingCampaignError(f"{where}: {field} does not match FLOP accounting")
+        kernel_time = finite_positive(row, "kernel_time_ms", path)
+        total_tflops = finite_positive(row, "total_tflops", path)
+        for field, expected_value in (
+            ("total_tflops", total_flops / kernel_time / 1e9),
+            ("tflops_per_planned_active_sm", total_tflops / planned),
+        ):
+            if not math.isclose(
+                finite_positive(row, field, path), expected_value, rel_tol=1e-5, abs_tol=1e-6
+            ):
+                raise ScalingCampaignError(f"{where}: {field} does not match FLOP/time accounting")
 
         coverage = row["coverage_status"]
         if row["scale"] == "device_scale":
@@ -291,12 +364,25 @@ def validate_scaling_csv(
                 )
             if row["residency_evidence"] != "all_blocks_simultaneously_resident":
                 raise ScalingCampaignError(f"{where}: device-scale residency was not established")
-            if integer(row, "observed_unique_sm_count", path) != integer(
-                row, "planned_active_sm_count", path
-            ):
+            if observed != planned:
                 raise ScalingCampaignError(f"{where}: observed SM count != planned SM count")
+            expected_coverage = (
+                "full_device_coverage" if planned == hardware else "maximum_resident_coverage"
+            )
+            if coverage != expected_coverage:
+                raise ScalingCampaignError(f"{where}: coverage_status does not match active SM count")
         elif coverage != "isolated_unit":
             raise ScalingCampaignError(f"{where}: isolated coverage_status is {coverage!r}")
+
+        evidenced = row["tflops_per_evidenced_active_sm"]
+        if evidenced == "not_applicable":
+            if row["scale"] == "device_scale":
+                raise ScalingCampaignError(f"{where}: evidenced active-SM throughput is missing")
+        elif observed == 0 or not math.isclose(
+            finite_positive(row, "tflops_per_evidenced_active_sm", path), total_tflops / observed,
+            rel_tol=1e-5, abs_tol=1e-6,
+        ):
+            raise ScalingCampaignError(f"{where}: evidenced active-SM throughput does not match")
 
         snapshot = {field: row[field] for field in CONSTANT_FIELDS}
         if key not in constants:
@@ -313,11 +399,6 @@ def validate_scaling_csv(
             raise ScalingCampaignError(
                 f"{path}: {key} sample indexes are not exactly 0..{repetitions - 1}"
             )
-    if sorted(orders) != list(range(len(CONFIGURATIONS) * repetitions)):
-        raise ScalingCampaignError(
-            f"{path}: execution_order is not exactly 0..{len(CONFIGURATIONS) * repetitions - 1}"
-        )
-
     hardware = {constants[key]["hardware_sm_count"] for key in expected}
     if len(hardware) != 1:
         raise ScalingCampaignError(f"{path}: rows disagree on hardware_sm_count")
@@ -432,20 +513,7 @@ def main() -> int:
         "gpu": gpu,
         "container_image": image,
         "stage_order": ["umma_device_scaling"],
-        "parameters": {
-            "n": FROZEN_N,
-            "k": FROZEN_K,
-            "depth": FROZEN_DEPTH,
-            "threads_per_cta": FROZEN_THREADS_PER_CTA,
-            "iterations": BENCHMARK_ITERATIONS,
-            "warmup_iterations": BENCHMARK_WARMUP,
-            "repetitions": BENCHMARK_REPETITIONS,
-            "configuration_count": len(CONFIGURATIONS),
-            "input_type": "bf16",
-            "accumulator_type": "fp32",
-            "operand_path": "smem_smem",
-            "timing_source": "cuda_event_whole_kernel",
-        },
+        "parameters": FROZEN_PARAMETERS,
         "device_scaling": facts,
         "row_counts": {"umma_device_scaling": facts["row_count"]},
         "artifact_sha256": artifacts,
