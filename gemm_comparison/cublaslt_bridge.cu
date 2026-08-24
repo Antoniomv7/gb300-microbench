@@ -1,60 +1,7 @@
-// P3.5 - minimal C-ABI bridge to cuBLASLt for the five frozen BF16 GEMM shapes.
-//
-// This file owns no GEMM kernel. It creates a cuBLASLt handle, the operation
-// descriptor, four matrix layouts, a preference object, queries the vendor
-// heuristic, validates the selected algorithm, allocates exactly the workspace
-// that algorithm requires, exports the selected algorithm's metadata, and
-// launches `cublasLtMatmul`. Nothing else. No NVIDIA source is copied, forked,
-// patched, or vendored: only the public cuBLASLt API declared in the pinned
-// CUDA 13.1 headers is called.
-//
-// Difference from the closed P3.3 bridge (`cublaslt_bridge.cu`, untouched):
-// P3.3 froze one single shape as compile-time constants, so `p33_plan_create`
-// took no geometry at all. P3.5 must serve five shapes, so `p35_plan_create`
-// accepts (M,N,K) - and then refuses every geometry that is not one of the five
-// entries in the frozen allowlist below. Nothing else about the descriptor
-// contract or the algorithm policy is parameterised, negotiated, or reachable
-// from the caller: the transpose modes, memory orders, data types, compute and
-// scale types, pointer mode, epilogue, alpha, beta, workspace limit, requested
-// heuristic count, and search mode are all still compile-time constants, and
-// the leading dimensions are *derived* from the validated shape rather than
-// supplied. Every one of them is reported back through `p35_plan_info_t`, so
-// the Python wrapper can assert that this translation unit and the wrapper
-// agree, instead of restating the contract twice and hoping.
-//
-// The allowlist is also readable from the caller (`p35_shape_count` /
-// `p35_shape_at`), which lets the Python wrapper prove that the C side's five
-// shapes are exactly the five shapes it froze independently - rather than the
-// two sides silently disagreeing about what "the frozen shapes" means.
-//
-// Contract with the caller:
-//
-//   * Every exported function is `extern "C"` and returns `int` (0 on success,
-//     non-zero on failure) or a plain pointer/size. No C++ exception may cross
-//     the boundary: every entry point has a catch-all handler.
-//   * Nothing is ever written to stdout or stderr. A failure records a message
-//     retrievable with `p35_last_error()`.
-//   * The bridge never chooses a fallback. If a frozen configuration has no
-//     supported algorithm, it fails and says so.
-//
-// Algorithm policy (fixed, non-autotuned, never benchmarked; identical to the
-// closed P3.3 policy):
-//
-//   * workspace limit exactly P35_WORKSPACE_LIMIT_BYTES;
-//   * exactly P35_HEURISTIC_REQUESTED heuristic results requested;
-//   * CUBLASLT_SEARCH_BEST_FIT;
-//   * the first returned entry whose state is CUBLAS_STATUS_SUCCESS is taken;
-//   * that algorithm is re-validated with cublasLtMatmulAlgoCheck();
-//   * it is rejected if it needs more workspace than the fixed limit;
-//   * exactly the required workspace is allocated (a null pointer when the
-//     requirement is zero);
-//   * only that one algorithm is ever executed.
-//
-// A different supported algorithm may naturally be selected for each shape.
-// The *selection policy* never changes.
-//
-// No candidate is timed, compared, or ranked here: this bridge measures
-// nothing. The Python wrapper owns every timer.
+// Minimal C ABI for the fixed cuBLASLt baseline.
+// It accepts only the five published BF16 shapes, selects the first supported
+// heuristic under a fixed descriptor/workspace contract and exports the plan
+// metadata. Correctness and timing belong to the Python wrapper.
 
 #include <cublasLt.h>
 #include <cuda_runtime.h>

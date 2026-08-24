@@ -1,45 +1,6 @@
-// Device-scale BF16 UMMA microbenchmark: the supplementary "launch scale"
-// arm of the UMMA study.
-//
-// The frozen umma_1sm.cu / umma_2sm.cu experiment varies the *instruction*
-// dimension (tcgen05.mma .cta_group::1 vs .cta_group::2) at N in
-// {64,128,256} and depth in {4,16,64,256}, always on one CTA or one two-CTA
-// cluster. This binary varies a different, orthogonal dimension -- *launch
-// scale* -- at the single already-identified ceiling shape (N=256,
-// depth=256), and holds the instruction dimension fixed:
-//
-//   umma_1sm / isolated      one CTA,                       cta_group::1
-//   umma_2sm / isolated      one two-CTA cluster,           cta_group::2
-//   umma_1sm / device_scale  one CTA per usable SM,         cta_group::1
-//   umma_2sm / device_scale  as many resident 2-CTA clusters as the device
-//                            supports,                      cta_group::2
-//
-// "All SM" is NOT a third UMMA instruction: PTX offers only .cta_group::1
-// and .cta_group::2. The four rows above are two instruction modes crossed
-// with two launch scales.
-//
-// Instruction descriptors, the shared-memory K-major packing, the TMEM
-// allocate/fence/commit/wait/readback/dealloc/relinquish lifecycle, the
-// cluster-wide synchronization required by .cta_group::2, the validation
-// pattern and the per-work-unit operation count are all identical to the
-// corresponding N=256, depth=256 specializations of the frozen kernels;
-// only the launch geometry, the per-work-unit output indexing, the added
-// residency/SM-id diagnostics and the CUDA-event host timing differ.
-//
-// Primary normative source: NVIDIA PTX ISA 9.3, chapter "9.7.17. TensorCore
-// 5th Generation Family Instructions".
-//
-// Timing: %clock64 is a per-SM counter and is NOT used as the primary
-// timer here; every published sample is a whole-kernel CUDA-event
-// measurement. Per-work-unit %clock64 values are retained only as
-// min/max diagnostics.
-//
-// Exit codes: 0 = success (or --help/--self-test pass), 1 =
-// validation/CUDA/self-test failure, 2 = command-line usage error.
-//
-// This binary never selects a GPU, never reads any environment variable
-// except EXPECTED_GPU_UUID (set by scripts/run_gpu.sh), and requires
-// exactly one visible device at compute capability 10.3.
+// Supplementary BF16 UMMA launch-scaling microbenchmark.
+// It crosses cta_group::1/2 with isolated/device-scale launches at N=256 and
+// depth=256. Residency, SM coverage and correctness are verified before timing.
 
 #include <algorithm>
 #include <cctype>

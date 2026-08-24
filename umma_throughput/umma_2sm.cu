@@ -1,36 +1,6 @@
-// 2-SM BF16 UMMA instruction microbenchmark: the CTA-pair, cta_group::2 arm
-// of the "BF16 UMMA throughput" experiment. It shares no code with the 1-SM
-// arm; every descriptor, primitive, and synchronization step is re-derived
-// here for the CTA-pair case.
-//
-// Frozen experimental contract: tcgen05.mma, kind::f16,
-// cta_group::2, BF16 x BF16 -> FP32, M=256 (128 local rows per CTA of a
-// two-CTA cluster), K=16 (implied by kind::f16 dense BF16), N in
-// {64,128,256}, depth in {4,16,64,256}, A and B in SMEM, D in TMEM, exactly
-// one static two-CTA cluster of 128 threads per CTA, exactly twelve
-// specializations.
-//
-// Primary normative source: NVIDIA PTX ISA 9.3
-// (https://docs.nvidia.com/cuda/parallel-thread-execution/), chapter
-// "9.7.17. TensorCore 5th Generation Family Instructions", read from the
-// official PDF (https://docs.nvidia.com/cuda/pdf/ptx_isa_9.3.pdf), including
-// the CTA Pair / Issue Granularity section (9.7.17.5, 9.7.17.5.1), the M=256
-// data-path layout (9.7.17.10.5, Figure 205/206, "Layout A"), and the
-// tcgen05.commit multicast form (9.7.17.12.1). Secondary conceptual
-// reference (adapted, not copied, and independently checked against the PTX
-// ISA): the pinned revision of
-// SemiAnalysisAI/microbench-blackwell/umma_throughput/umma_tput.cu. Every
-// descriptor, synchronization step, TMEM address, and completion mechanism
-// below was re-derived from the PTX ISA text and validated by compiling
-// isolated probes against the pinned CUDA 13.1.80 toolchain before being
-// assembled into this file.
-//
-// Exit codes: 0 = success (or --help/--self-test pass), 1 =
-// validation/CUDA/self-test failure, 2 = command-line usage error.
-//
-// This binary never selects a GPU, never reads any environment variable
-// except EXPECTED_GPU_UUID (set by scripts/run_gpu.sh), and requires
-// exactly one visible device at compute capability 10.3.
+// BF16 tcgen05.mma cta_group::2 microbenchmark.
+// One two-CTA cluster computes M=256, K=16 over N={64,128,256} and
+// depth={4,16,64,256}; operands reside in shared memory and D in tensor memory.
 
 #include <algorithm>
 #include <cctype>

@@ -1,30 +1,6 @@
-// 1-SM BF16 UMMA instruction microbenchmark: the single-CTA, cta_group::1
-// arm of the "BF16 UMMA throughput" experiment.
-//
-// Frozen experimental contract: tcgen05.mma, kind::f16, cta_group::1,
-// BF16 x BF16 -> FP32, M=128, K=16 (implied by kind::f16 dense BF16), N in
-// {64,128,256}, depth in {4,16,64,256}, A and B in SMEM, D in TMEM, exactly
-// one CTA of 128 threads, exactly twelve specializations.
-//
-// Primary normative source: NVIDIA PTX ISA 9.3
-// (https://docs.nvidia.com/cuda/parallel-thread-execution/), chapter
-// "9.7.17. TensorCore 5th Generation Family Instructions". Secondary
-// conceptual reference (adapted, not copied, and independently checked
-// against the PTX ISA): the pinned revision of
-// SemiAnalysisAI/microbench-blackwell/umma_throughput/umma_tput.cu. This
-// file's shared-memory descriptor byte layout (leading/stride-dimension
-// byte offsets) is derived independently from the PTX ISA's canonical
-// K-major layout formula, not copied from that reference, because the
-// reference does not validate numerical correctness and its per-operand
-// leading/stride-dimension values could not be reconciled with a K-major
-// interpretation.
-//
-// Exit codes: 0 = success (or --help/--self-test pass), 1 =
-// validation/CUDA/self-test failure, 2 = command-line usage error.
-//
-// This binary never selects a GPU, never reads any environment variable
-// except EXPECTED_GPU_UUID (set by scripts/run_gpu.sh), and requires
-// exactly one visible device at compute capability 10.3.
+// BF16 tcgen05.mma cta_group::1 microbenchmark.
+// Fixed M=128, K=16, N={64,128,256}, depth={4,16,64,256}; operands reside in
+// shared memory and the accumulator in tensor memory.
 
 #include <algorithm>
 #include <cctype>

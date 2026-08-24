@@ -1,36 +1,6 @@
-// Standalone LDGSTS (cp.async) global-memory->SMEM effective-copy
-// microbenchmark: the LDGSTS arm of the "LDGSTS versus TMA" experiment.
-//
-// Frozen experimental contract: method=ldgsts, PTX cp.async.cg.shared.global, 16-byte
-// vectorization, 128 threads/CTA, a maximum active residency of 1 CTA/SM
-// (enforced by an oversized dynamic-shared-memory reservation and checked
-// with the occupancy API), grid = SM count, stages in {2,4,8}, bytes-in-flight/SM in
-// {16,32,64} KiB. The nine (stages, bytes-in-flight) combinations are
-// reached through two kernel templates (validate, benchmark) instantiated
-// via runtime dispatch — the kernel body itself is written once.
-//
-//   stage_bytes                  = bytes_in_flight_per_sm / stages
-//   copies_per_thread_per_stage  = stage_bytes / (128 threads * 16 bytes)
-//   bytes_in_flight_per_sm       = stages * stage_bytes
-//
-// Logical layout (shared with the TMA arm): 128 BF16-width
-// (2-byte) elements per row = 256 bytes/row, tile_height = stage_bytes/256.
-// LDGSTS itself copies each tile as one contiguous linear region; the row
-// layout is metadata for CSV/TMA compatibility, not something the copy loop
-// depends on.
-//
-// Conceptual references only (no code copied): the PTX ISA chapter on
-// cp.async/cp.async.commit_group/cp.async.wait_group, and the CUDA
-// Programming Guide's asynchronous-copy section. This file is an
-// independent implementation written against that documentation, not a
-// derivative of any third-party benchmark source.
-//
-// Exit codes: 0 = success (or --help), 1 = validation/CUDA/self-test
-// failure, 2 = command-line usage error.
-//
-// This binary never selects a GPU, never reads any environment variable
-// except EXPECTED_GPU_UUID (set by scripts/run_gpu.sh), and requires
-// exactly one visible device at compute capability 10.3.
+// LDGSTS global-to-shared-memory microbenchmark.
+// One 128-thread CTA runs per SM over stages {2,4,8} and 16/32/64 KiB in
+// flight. Correctness is checked before timing.
 
 #include <algorithm>
 #include <chrono>

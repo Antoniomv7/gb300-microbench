@@ -16,10 +16,7 @@ ANALYSIS_OUT ?= results/new
 NCU_GATE_ID := ncu-gate-$(shell date -u +%Y%m%dT%H%M%SZ)
 NCU_GATE_DIR ?= runs/$(NCU_GATE_ID)
 
-# Supplementary UMMA launch-scale experiment. It has its own campaign root,
-# its own raw CSV schema and its own results location, so it can never be
-# mixed with the closed three-experiment population under runs/<UTC-ID>/ and
-# results/new.
+# Separate output roots prevent primary and supplementary data from mixing.
 UMMA_SCALING_ROOT ?= runs/umma_device_scaling
 UMMA_SCALING_KIND ?= final
 UMMA_SCALING_ID ?=
@@ -133,10 +130,7 @@ analyze:
 		$(foreach id,$(FINAL_CAMPAIGNS),--campaign "$(CAMPAIGN_ROOT)/$(id)") \
 		--output "$(ANALYSIS_OUT)"
 
-# --- Supplementary UMMA launch-scale experiment -----------------------------
-# `build` and `sass` above stay exactly as they were: the device-scaling binary
-# is a separate goal of umma_throughput/Makefile, so the frozen campaign
-# contract's build behaviour is unchanged.
+# The device-scaling binary is an explicit build goal.
 
 umma-scaling-build:
 	@mkdir -p build/umma_throughput build/sass

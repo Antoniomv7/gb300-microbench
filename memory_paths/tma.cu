@@ -1,40 +1,6 @@
-// Standalone 2D unicast TMA global-memory->SMEM effective-copy
-// microbenchmark: the TMA arm of the "LDGSTS versus TMA" experiment.
-//
-// Frozen experimental contract: method=tma, PTX
-// cp.async.bulk.tensor.2d.shared::cta.global with mbarrier transaction
-// completion, 128 threads/CTA, a maximum active residency of 1 CTA/SM
-// (enforced by an oversized dynamic-shared-memory reservation and checked
-// with the occupancy API), grid = SM count, stages in {2,4,8},
-// bytes-in-flight/SM in {16,32,64} KiB. The nine (stages, bytes-in-flight)
-// combinations are reached through two kernel templates (validate,
-// benchmark) instantiated via runtime dispatch — the kernel body itself is
-// written once.
-//
-//   stage_bytes                  = bytes_in_flight_per_sm / stages
-//   copies_per_thread_per_stage  = stage_bytes / (128 threads * 16 bytes)
-//   bytes_in_flight_per_sm       = stages * stage_bytes
-//   tile_height                  = stage_bytes / 256
-//
-// copies_per_thread_per_stage and vector_bytes describe the logical
-// LDGSTS-equivalent tile decomposition shared with the LDGSTS arm for
-// CSV/validation compatibility; TMA issues one 2D tile operation per stage,
-// not one operation per 16-byte vector.
-//
-// Conceptual references only (no code copied): the CUDA 13.1 programming
-// guide's asynchronous-copies/TMA section, the PTX ISA chapter on
-// cp.async.bulk.tensor and mbarrier, and the CUDA 13.1 binary utilities
-// guide. The installed CUDA 13.1 headers (cuda.h, cudaTypedefs.h,
-// <cuda/ptx>) are the API source of truth for exact signatures; this file is
-// an independent implementation, not a derivative of any third-party
-// benchmark source.
-//
-// Exit codes: 0 = success (or --help), 1 = validation/CUDA/self-test
-// failure, 2 = command-line usage error.
-//
-// This binary never selects a GPU, never reads any environment variable
-// except EXPECTED_GPU_UUID (set by scripts/run_gpu.sh), and requires
-// exactly one visible device at compute capability 10.3.
+// Two-dimensional unicast TMA global-to-shared-memory microbenchmark.
+// It uses the same grid and pipeline sweep as LDGSTS, with mbarrier completion.
+// Correctness is checked before timing.
 
 #include <algorithm>
 #include <chrono>

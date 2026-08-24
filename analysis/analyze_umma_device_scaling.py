@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate exactly three supplementary UMMA device-scaling campaigns.
-
-The question this answers is not "which tcgen05.mma instruction is faster" but
-"how does each of the two UMMA execution modes behave when it is replicated
-across the maximum simultaneously usable SM capacity of the GPU".  Both
-launch scales are measured inside the same campaign, so every scaling
-efficiency is computed against an isolated baseline collected on the same
-GPU, at the same commit, minutes apart.
-
-Each campaign's 30 repetitions are reduced to a median first; only the three
-campaign-level medians ever enter a cross-campaign statistic.  The 90
-repetitions are never pooled as if they were independent campaigns, and three
-campaigns support descriptive statistics only, never significance testing.
-"""
+"""Aggregate three device-scaling campaigns using campaign medians."""
 
 from __future__ import annotations
 

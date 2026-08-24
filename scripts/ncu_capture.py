@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Collect Nsight Compute counters for a subset of one campaign's kernels.
-
-The stage is optional and advisory.  It profiles the six memory
-configurations that anchor the HBM check and all twenty-four UMMA
-configurations that carry the SM clock, exports each report with
-``ncu --page raw --csv`` and stores the exported CSV, unmodified, inside the
-campaign directory.  A counter-permission refusal, a missing profiler or any
-other capture failure is recorded as a reason and never stops the campaign:
-``analysis/analyze.py`` reports whatever was captured and marks the rest as
-unavailable.
-
-Nsight Compute only ever sees paths inside a private directory in the
-container's own ``/tmp``; the exported bytes travel back over stdout.
-"""
+"""Collect optional Nsight Compute evidence for one campaign."""
 
 from __future__ import annotations
 

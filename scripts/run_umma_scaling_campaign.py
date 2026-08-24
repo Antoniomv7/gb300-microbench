@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Freeze one supplementary UMMA device-scaling campaign.
-
-The supplementary experiment is deliberately separate from the closed
-three-experiment campaign contract in ``scripts/run_campaign.py``: it lives
-under its own output root, writes its own raw CSV schema, and never touches
-``runs/<UTC-ID>/`` or ``results/new``.  This module also owns the raw-CSV
-contract, which ``analysis/analyze_umma_device_scaling.py`` imports.
-"""
+"""Run one supplementary UMMA campaign and freeze its evidence."""
 
 from __future__ import annotations
 

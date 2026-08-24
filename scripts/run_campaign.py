@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Run one complete GB300 campaign and freeze its raw evidence.
-
-The script deliberately owns only four responsibilities: require a clean Git
-revision, run the three public benchmarks in a fixed order, validate their raw
-CSV contracts, and write a small hash-pinned manifest.  Cross-campaign
-statistics belong to ``analysis/analyze.py``.
-"""
+"""Run one primary campaign and freeze validated, hash-pinned evidence."""
 
 from __future__ import annotations
 

@@ -9,9 +9,7 @@ NVCCFLAGS ?= -std=c++17 -O3 -lineinfo
 .PHONY: all sass clean scaling scaling-sass
 all: $(BUILD_DIR)/umma_1sm $(BUILD_DIR)/umma_2sm
 
-# The supplementary launch-scale binary is a separate goal, deliberately not
-# part of `all`: the frozen `make build` / `make sass` behaviour of the closed
-# 24-configuration campaign contract stays byte-for-byte unchanged.
+# Device scaling is excluded from the default build.
 scaling: $(BUILD_DIR)/umma_device_scaling
 
 $(BUILD_DIR)/umma_1sm: umma_1sm.cu Makefile ../VERSIONS.env

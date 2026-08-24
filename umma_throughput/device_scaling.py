@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Run the four isolated/device-scale UMMA configurations and write one raw CSV.
-
-The binary owns the interleaving: it measures ``umma_1sm``/``umma_2sm`` at both
-launch scales inside a single process, alternating their order between
-repetitions, so this driver invokes it exactly once and only checks that the
-returned table matches the supplementary contract.  It never appends to the
-frozen ``umma_throughput.csv``.
-"""
+"""Run the four isolated/device-scale UMMA configurations."""
 
 from __future__ import annotations
 
