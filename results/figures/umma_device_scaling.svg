@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-label="UMMA isolated versus device-scale throughput and scaling efficiency">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="28.0" y="36.0" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#202124">BF16 UMMA: isolated work unit versus device-scale replication</text>
+<text x="28.0" y="62.0" font-family="Arial, sans-serif" font-size="13" fill="#5f6368">N=256, depth=256, K=16, operands in SMEM. Mean of three per-campaign medians; whiskers show min–max across the three campaigns (n=3).</text>
+<text x="28.0" y="82.0" font-family="Arial, sans-serif" font-size="12" fill="#5f6368">Isolated and device-scale totals differ by more than two orders of magnitude and therefore use separate y-axes; they are never drawn on one scale.</text>
+<rect x="96.0" y="150.0" width="320.0" height="320.0" fill="none" stroke="#9aa0a6" stroke-width="1"/>
+<text x="256.0" y="122.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#202124">Isolated work unit</text>
+<text x="256.0" y="139.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#5f6368">total TFLOP/s (own scale)</text>
+<line x1="96.0" y1="470.0" x2="416.0" y2="470.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="89.0" y="474.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">0</text>
+<line x1="96.0" y1="390.0" x2="416.0" y2="390.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="89.0" y="394.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">10</text>
+<line x1="96.0" y1="310.0" x2="416.0" y2="310.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="89.0" y="314.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">20</text>
+<line x1="96.0" y1="230.0" x2="416.0" y2="230.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="89.0" y="234.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">30</text>
+<line x1="96.0" y1="150.0" x2="416.0" y2="150.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="89.0" y="154.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">40</text>
+<rect x="139.0" y="346.1" width="74.0" height="123.9" fill="#1f6feb" fill-opacity="0.82" stroke="#1f6feb" stroke-width="1"/>
+<line x1="176.0" y1="346.8" x2="176.0" y2="345.8" stroke="#202124" stroke-width="1.4"/>
+<line x1="170.0" y1="346.8" x2="182.0" y2="346.8" stroke="#202124" stroke-width="1.4"/>
+<line x1="170.0" y1="345.8" x2="182.0" y2="345.8" stroke="#202124" stroke-width="1.4"/>
+<text x="176.0" y="337.8" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#202124">15.49</text>
+<text x="176.0" y="488.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">umma_1sm</text>
+<text x="176.0" y="502.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">1 unit(s)</text>
+<text x="176.0" y="516.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">1 SM</text>
+<rect x="299.0" y="224.5" width="74.0" height="245.5" fill="#d97706" fill-opacity="0.82" stroke="#d97706" stroke-width="1"/>
+<line x1="336.0" y1="225.6" x2="336.0" y2="223.7" stroke="#202124" stroke-width="1.4"/>
+<line x1="330.0" y1="225.6" x2="342.0" y2="225.6" stroke="#202124" stroke-width="1.4"/>
+<line x1="330.0" y1="223.7" x2="342.0" y2="223.7" stroke="#202124" stroke-width="1.4"/>
+<text x="336.0" y="215.7" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#202124">30.69</text>
+<text x="336.0" y="488.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">umma_2sm</text>
+<text x="336.0" y="502.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">1 unit(s)</text>
+<text x="336.0" y="516.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">2 SM</text>
+<rect x="482.0" y="150.0" width="320.0" height="320.0" fill="none" stroke="#9aa0a6" stroke-width="1"/>
+<text x="642.0" y="122.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#202124">Device scale</text>
+<text x="642.0" y="139.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#5f6368">total TFLOP/s (own scale)</text>
+<line x1="482.0" y1="470.0" x2="802.0" y2="470.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="475.0" y="474.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">0</text>
+<line x1="482.0" y1="390.0" x2="802.0" y2="390.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="475.0" y="394.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">800</text>
+<line x1="482.0" y1="310.0" x2="802.0" y2="310.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="475.0" y="314.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">1,600</text>
+<line x1="482.0" y1="230.0" x2="802.0" y2="230.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="475.0" y="234.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">2,400</text>
+<line x1="482.0" y1="150.0" x2="802.0" y2="150.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="475.0" y="154.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">3,200</text>
+<rect x="525.0" y="242.0" width="74.0" height="228.0" fill="#1f6feb" fill-opacity="0.82" stroke="#1f6feb" stroke-width="1"/>
+<line x1="562.0" y1="243.6" x2="562.0" y2="241.1" stroke="#202124" stroke-width="1.4"/>
+<line x1="556.0" y1="243.6" x2="568.0" y2="243.6" stroke="#202124" stroke-width="1.4"/>
+<line x1="556.0" y1="241.1" x2="568.0" y2="241.1" stroke="#202124" stroke-width="1.4"/>
+<text x="562.0" y="233.1" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#202124">2,280</text>
+<text x="562.0" y="488.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">umma_1sm</text>
+<text x="562.0" y="502.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">148 unit(s)</text>
+<text x="562.0" y="516.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">148 SM</text>
+<rect x="685.0" y="244.1" width="74.0" height="225.9" fill="#d97706" fill-opacity="0.82" stroke="#d97706" stroke-width="1"/>
+<line x1="722.0" y1="245.1" x2="722.0" y2="243.4" stroke="#202124" stroke-width="1.4"/>
+<line x1="716.0" y1="245.1" x2="728.0" y2="245.1" stroke="#202124" stroke-width="1.4"/>
+<line x1="716.0" y1="243.4" x2="728.0" y2="243.4" stroke="#202124" stroke-width="1.4"/>
+<text x="722.0" y="235.4" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#202124">2,259</text>
+<text x="722.0" y="488.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">umma_2sm</text>
+<text x="722.0" y="502.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">74 unit(s)</text>
+<text x="722.0" y="516.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">148 SM</text>
+<rect x="868.0" y="150.0" width="230.4" height="320.0" fill="none" stroke="#9aa0a6" stroke-width="1"/>
+<text x="983.2" y="122.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#202124">Scaling efficiency</text>
+<text x="983.2" y="139.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#5f6368">percent of each method&#x27;s own ideal</text>
+<line x1="868.0" y1="470.0" x2="1098.4" y2="470.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="861.0" y="474.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">0</text>
+<line x1="868.0" y1="390.0" x2="1098.4" y2="390.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="861.0" y="394.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">30</text>
+<line x1="868.0" y1="310.0" x2="1098.4" y2="310.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="861.0" y="314.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">60</text>
+<line x1="868.0" y1="230.0" x2="1098.4" y2="230.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="861.0" y="234.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">90</text>
+<line x1="868.0" y1="150.0" x2="1098.4" y2="150.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="861.0" y="154.0" text-anchor="end" font-family="Arial, sans-serif" font-size="10" fill="#5f6368">120</text>
+<line x1="868.0" y1="203.3" x2="1098.4" y2="203.3" stroke="#637329" stroke-width="1.5" stroke-dasharray="6 4"/>
+<rect x="896.8" y="204.8" width="57.6" height="265.2" fill="#1f6feb" fill-opacity="0.82" stroke="#1f6feb" stroke-width="1"/>
+<line x1="925.6" y1="205.2" x2="925.6" y2="204.3" stroke="#202124" stroke-width="1.4"/>
+<line x1="919.6" y1="205.2" x2="931.6" y2="205.2" stroke="#202124" stroke-width="1.4"/>
+<line x1="919.6" y1="204.3" x2="931.6" y2="204.3" stroke="#202124" stroke-width="1.4"/>
+<text x="925.6" y="196.3" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#202124">99.46</text>
+<text x="925.6" y="488.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">umma_1sm</text>
+<text x="925.6" y="502.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">device / isolated x N</text>
+<text x="925.6" y="516.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043"></text>
+<rect x="1012.0" y="204.7" width="57.6" height="265.3" fill="#d97706" fill-opacity="0.82" stroke="#d97706" stroke-width="1"/>
+<line x1="1040.8" y1="204.8" x2="1040.8" y2="204.6" stroke="#202124" stroke-width="1.4"/>
+<line x1="1034.8" y1="204.8" x2="1046.8" y2="204.8" stroke="#202124" stroke-width="1.4"/>
+<line x1="1034.8" y1="204.6" x2="1046.8" y2="204.6" stroke="#202124" stroke-width="1.4"/>
+<text x="1040.8" y="196.6" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#202124">99.5</text>
+<text x="1040.8" y="488.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">umma_2sm</text>
+<text x="1040.8" y="502.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043">device / isolated x N</text>
+<text x="1040.8" y="516.0" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#3c4043"></text>
+<text x="874.0" y="532.0" font-family="Arial, sans-serif" font-size="10" fill="#637329">dashed line = 100% linear scaling</text>
+<text x="28.0" y="594.0" font-family="Arial, sans-serif" font-size="11" fill="#5f6368">Compute-focused microbenchmark with operands already in shared memory: not a GEMM, not an HBM benchmark, and not an NVIDIA architectural peak claim.</text>
+<text x="28.0" y="610.0" font-family="Arial, sans-serif" font-size="11" fill="#5f6368">Whole-kernel CUDA-event timing; %clock64 is a per-SM counter and is kept only as a diagnostic. Three campaigns support descriptive statistics, not significance testing.</text>
+</svg>

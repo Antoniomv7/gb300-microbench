@@ -4,7 +4,7 @@ Minimal, reproducible microbenchmarks for studying HBM-to-SMEM transfer paths, f
 
 This is the compact publication layer of [gb300-gemm-anatomy](https://github.com/Antoniomv7/gb300-gemm-anatomy), frozen at commit [`86f2382`](https://github.com/Antoniomv7/gb300-gemm-anatomy/commit/86f2382fb92a957035c067ae725e9e25afacab6f). Development protocols, agent instructions, phase gates, campaign orchestration, static checkers, and audit scaffolding are intentionally excluded.
 
-The CUDA sources are preserved with identical executable code: every identifier, constant, template, inline-PTX block and command-line option is unchanged from the build that produced the reference results, so the compiled binaries measure exactly what they measured there. Only comments and message text were rewritten, to remove pointers into the development repository. The equivalence was checked by stripping comments from both versions and comparing the remaining token streams, which are identical.
+The original memory, UMMA and GEMM CUDA sources are preserved with identical executable code: every identifier, constant, template, inline-PTX block and command-line option is unchanged from the historical development build, so the compiled binaries measure exactly what they measured there. Only comments and message text were rewritten, to remove pointers into the development repository. The equivalence was checked by stripping comments from both versions and comparing the remaining token streams, which are identical. Whole-device UMMA scaling is implemented as a separate supplementary experiment.
 
 ## Experiments
 
@@ -17,23 +17,36 @@ The CUDA sources are preserved with identical executable code: every identifier,
 
 The CUDA kernels retain their integrated numerical validation. The GEMM comparison validates every candidate against one FP32 reference before timing it.
 
-## Historical reference results
+## Final experimental results
 
-The tables and figures currently in `results/` are the byte-identical accepted P4.3 outputs from the frozen development repository. They are retained as a reference until the clean repository has completed its own experimental population. They are not mixed with the new campaigns and will not be silently reused as their raw input.
-
-The reference summarizes three complete final campaigns on one NVIDIA B300 SXM6 AC. Campaign `20260812T013848Z` was a pilot and is excluded from every statistic.
+The tables and figures in `results/` summarize three final primary campaigns and three final supplementary UMMA campaigns. Both populations ran on the same NVIDIA B300 SXM6 AC with the same driver and container image. Their execution commits differ and are recorded separately below; the supplementary pilot is excluded from every statistic.
 
 ### HBM-to-SMEM paths
 
 ![LDGSTS and TMA effective transfer rates](results/figures/memory_paths.svg)
 
-The reported GB/s is a timing-derived effective transfer rate (`useful_bytes / kernel_time`), not a direct DRAM-bandwidth counter and not GEMM traffic. LDGSTS was higher in eight of nine matched configurations; TMA was essentially equal and slightly higher only at 2 stages and 64 KiB in flight (mean ratio `1.00097`). The highest means were about `7.024 TB/s` for LDGSTS and `6.962 TB/s` for TMA. Every saturation candidate reached the largest tested value, so no plateau was observed inside the 16/32/64 KiB grid.
+The reported GB/s is a timing-derived effective transfer rate (`useful_bytes / kernel_time`), not a direct DRAM-bandwidth counter and not GEMM traffic. LDGSTS was higher in eight of nine matched configurations; TMA was essentially equal and slightly higher only at 2 stages and 64 KiB in flight (mean ratio `1.00060`). The highest means were about `7.024 TB/s` for LDGSTS and `6.962 TB/s` for TMA. Every saturation candidate reached the largest tested value, so no plateau was observed inside the 16/32/64 KiB grid.
 
 ### BF16 UMMA throughput
 
 ![1-SM and 2-SM UMMA throughput](results/figures/umma_throughput.svg)
 
-The metric is derived from validated operation counts and `%clock64` cycles. The selected per-SM ceiling candidate was `umma_1sm`, `N=256`, depth `256`, corresponding to a modeled mean of `16.358 TFLOP/s/SM` after applying the measured SM clock. The 2-SM/1-SM speedup reached `1.983x` at `N=256`, depth `256`; a `2.096x` value at `N=64`, depth `256` is preserved as a surprising diagnostic rather than treated as an architectural claim.
+The metric is derived from validated operation counts and `%clock64` cycles. The selected per-SM ceiling candidate was `umma_1sm`, `N=256`, depth `256`, corresponding to a modeled mean of `16.354 TFLOP/s/SM` after applying the measured SM clock. The 2-SM/1-SM speedup reached `1.983x` at `N=256`, depth `256`; a `2.096x` value at `N=64`, depth `256` is preserved as a surprising diagnostic rather than treated as an architectural claim.
+
+### Whole-device BF16 UMMA scaling
+
+![Isolated and whole-device 1-SM and 2-SM UMMA throughput](results/figures/umma_device_scaling.svg)
+
+At `N=256`, depth `256`, both device-scale configurations cover all 148 SMs; `umma_2sm` uses 74 simultaneously resident two-CTA clusters.
+
+| Method | Launch scale | Active SMs | Total TFLOP/s | TFLOP/s/SM | Scaling efficiency |
+|---|---|---:|---:|---:|---:|
+| `umma_1sm` | isolated | 1 | 15.486 | 15.486 | — |
+| `umma_2sm` | isolated | 2 | 30.686 | 15.343 | — |
+| `umma_1sm` | whole device | 148 | 2279.568 | 15.402 | 99.46% |
+| `umma_2sm` | whole device | 148 | 2259.351 | 15.266 | 99.50% |
+
+The whole-device `umma_2sm` total is `0.89%` below `umma_1sm` at equal 148-SM coverage. Each efficiency uses its own same-campaign isolated baseline; these supplementary baselines use CUDA-event timing and the same shared-memory reservation as their whole-device launches, and are not interchangeable with the `%clock64`-based isolated sweep above. The largest coefficient of variation across the measured throughput configurations is `0.62%`.
 
 ### CuTe DSL versus cuBLASLt
 
@@ -43,17 +56,17 @@ The metric is derived from validated operation counts and `%clock64` cycles. The
 
 | Shape `(M,N,K,L)` | CuTe DSL TFLOP/s | cuBLASLt TFLOP/s | CuTe DSL / cuBLASLt | Gap |
 |---|---:|---:|---:|---:|
-| `4096x4096x4096x1` | 1665.4 | 1751.6 | 95.08% | 4.92% |
-| `8192x8192x8192x1` | 1443.7 | 2118.7 | 68.14% | 31.86% |
-| `16384x512x4096x1` | 811.1 | 1432.7 | 56.61% | 43.39% |
-| `32768x512x4096x1` | 756.2 | 1504.4 | 50.27% | 49.73% |
-| `512x16384x4096x1` | 1262.5 | 1495.1 | 84.44% | 15.56% |
+| `4096x4096x4096x1` | 1650.0 | 1749.1 | 94.33% | 5.67% |
+| `8192x8192x8192x1` | 1440.8 | 2102.4 | 68.53% | 31.47% |
+| `16384x512x4096x1` | 812.2 | 1430.3 | 56.79% | 43.21% |
+| `32768x512x4096x1` | 758.2 | 1502.6 | 50.46% | 49.54% |
+| `512x16384x4096x1` | 1270.2 | 1488.6 | 85.32% | 14.68% |
 
 These are hot-cache measurements. No GEMM kernel was profiled with Nsight Compute, so the gap is not attributed to memory, Tensor Cores, scheduling, or any other single cause.
 
 ## Environment
 
-The original campaigns used:
+Both published campaign populations used:
 
 - NVIDIA B300 SXM6 AC, compute capability 10.3
 - driver 610.43.02
@@ -91,7 +104,7 @@ Choose one idle physical GPU explicitly:
 export BLACKWELL_GPU_INDEX=7
 ```
 
-The benchmarks record the Git commit they ran at, and both `make smoke` and every campaign require a clean worktree, so **commit the repository before running anything**. The same commit, container image and physical GPU must be used for the whole population.
+The benchmarks record the Git commit they ran at, and both `make smoke` and every campaign require a clean worktree, so **commit the repository before running anything**. The same commit, container image and physical GPU must be used within each campaign population.
 
 Then run the short GPU validation:
 
@@ -150,7 +163,7 @@ Aggregate the three final IDs explicitly, in execution order:
 
 ```bash
 make analyze \
-  FINAL_CAMPAIGNS="20260901T090000Z 20260901T100000Z 20260901T110000Z" \
+  FINAL_CAMPAIGNS="20260822T222634Z 20260822T223050Z 20260822T223504Z" \
   ANALYSIS_OUT=results/new
 ```
 
@@ -239,8 +252,8 @@ Each invocation creates `runs/umma_device_scaling/<UTC-ID>/` with `raw/umma_devi
 
 ```bash
 make umma-scaling-analyze \
-  UMMA_SCALING_FINALS="20260901T090000Z 20260901T100000Z 20260901T110000Z" \
-  UMMA_SCALING_ANALYSIS_OUT=results/umma_device_scaling/20260901T120000Z
+  UMMA_SCALING_FINALS="20260824T122229Z 20260824T122239Z 20260824T122247Z" \
+  UMMA_SCALING_ANALYSIS_OUT=results/umma_device_scaling/final
 ```
 
 The analyzer takes exactly three distinct final campaigns and requires one shared commit, GPU, container image, parameter set and launch geometry. It reduces each campaign's 30 repetitions to a median first and only then computes mean, median, sample standard deviation, minimum, maximum and CV across the three campaign-level medians; the 90 repetitions are never pooled as independent campaigns, and three campaigns support descriptive statistics, not significance testing. Scaling efficiency is computed separately per method, each against its own isolated baseline:
@@ -250,30 +263,31 @@ The analyzer takes exactly three distinct final campaigns and requires one share
 
 It also reports both device-scale totals, the `2sm / 1sm` total and per-active-SM ratios, and each method's gap from its own ideal linear projection. Values are never clamped, and totals are never compared without exposing the active-SM counts behind them: an unequal count sets `equal_active_sm_coverage` to false and raises a warning. Output goes to a separate location, `results/umma_device_scaling/<analysis-id>`, and never overwrites `results/new`; it contains a summary CSV, `summary.json`, one SVG figure with the isolated totals, device-scale totals and scaling efficiency on separate scales, a manifest and `SHA256SUMS`.
 
-No measured numbers are quoted here: the supplementary population has not yet been collected under a clean commit on the GB300.
+The published supplementary table and figure are `results/umma_device_scaling.csv` and `results/figures/umma_device_scaling.svg`; their measured values are summarized above.
 
 ### Relating this to the GEMM comparison
 
-The device-scale figure is an instruction-issue ceiling with operands already in shared memory and nothing else competing. `gemm_comparison/` measures complete GEMMs, including operand movement, tiling, scheduling and epilogue. The useful relation is a fraction — how much of the device-scale UMMA ceiling a real GEMM converts — and it is only meaningful when both come from the same GPU, driver, container image and commit, and are reported as two different measurements rather than one number. It bounds the headroom; it does not attribute any GEMM gap to memory, Tensor Cores, scheduling, or any other single cause, and it is not a roofline.
+The device-scale figure is an instruction-issue ceiling with operands already in shared memory and nothing else competing. `gemm_comparison/` measures complete GEMMs, including operand movement, tiling, scheduling and epilogue. The useful relation is a fraction — how much of the device-scale UMMA ceiling a real GEMM converts — and is only interpretable when both come from the same GPU, driver and container image with unchanged relevant benchmark code. The published populations meet those conditions but ran at the distinct commits recorded below; their results remain separate measurements rather than one number. This comparison bounds headroom without attributing any GEMM gap to memory, Tensor Cores, scheduling, or any other single cause, and it is not a roofline.
 
-## Reference provenance
+## Published provenance
 
-- final campaigns: `20260817T110330Z`, `20260817T111310Z`, `20260817T112011Z`;
-- pilot excluded: `20260812T013848Z`;
-- execution commit: `b08e45c2636a3ac17c94ad8b1368084914196d7a`;
-- analysis-code commit: `2ef1ac52907c407dd43c41661382fc8d5673cce4`;
-- accepted manifest SHA-256: `b95d17910f8384187ddc94afacc9081507858de1fb69292f5f3d73bf4cc2d6ac`.
+- primary final campaigns: `20260822T222634Z`, `20260822T223050Z`, `20260822T223504Z`;
+- primary execution commit: `1f27767ec9af121103b6d489592a9fd9052bb1b4`;
+- primary analysis manifest SHA-256: `1fce4eadaf9fc14c548c70128bbcee9979d73a34a7b629a985c9883c0a120a9b`;
+- supplementary final campaigns: `20260824T122229Z`, `20260824T122239Z`, `20260824T122247Z`;
+- supplementary pilot excluded: `20260824T122221Z`;
+- supplementary execution commit: `060c4aeec4598babf3701c0dcfb74ea15f828585`;
+- supplementary analysis manifest SHA-256: `244b93cac3f0f7b6e254867b8a281e70a1e65282288d3bc1ba2a284597283b6b`;
+- shared physical GPU: `GPU-40e00845-d89c-1393-2c32-a2dca3ee9442`.
 
-`provenance/acceptance.json` is the detached acceptance attestation. `provenance/provenance.json` records source identities, published-result hashes, the one path-only Python adaptation made for this layout, and hashes of the preserved SASS.
-
-New campaign manifests supersede this reference for the thesis dataset. The reference remains useful for checking whether the clean implementation preserves the earlier qualitative findings, but it is not part of the new three-campaign population.
+`provenance/provenance.json` records both campaign populations, their execution commits and manifest hashes, the shared container image, all eight published-artifact hashes, original source identities and preserved SASS hashes. `provenance/acceptance.json` remains the historical acceptance attestation of the source development project; it does not certify either newly published campaign population.
 
 ## Limitations
 
 - Three final campaigns support descriptive statistics, not significance testing.
 - Effective memory-path GB/s is derived from logical useful bytes and kernel time.
 - The new direct campaign does not claim DRAM bandwidth without a separate profiler capture.
-- The new UMMA analysis reports clock-independent FLOP/cycle/SM, not a measured whole-device peak.
+- The isolated UMMA sweep reports clock-independent FLOP/cycle/SM; whole-device TFLOP/s is a measured microbenchmark throughput, not an architectural peak.
 - All GEMM measurements are hot-cache and lack GEMM-level profiling.
 - The tested grids ended before a clear memory or UMMA plateau was observed.
 - Launch scale is not a third UMMA instruction; the supplementary experiment crosses the two PTX CTA groups with two launch scales and makes no whole-device peak claim.

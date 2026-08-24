@@ -13,25 +13,55 @@
     "compute_capability": "10.3",
     "driver_version": "610.43.02"
   },
-  "campaigns": {
-    "final": [
-      "20260817T110330Z",
-      "20260817T111310Z",
-      "20260817T112011Z"
-    ],
-    "excluded_pilot": "20260812T013848Z"
+  "container_image": {
+    "id": "sha256:54b10f0ccd3bd6121bd0b73bd883082d7c560248aa3d76ef77769660dd5fd4f4",
+    "tag": "gb300-microbench:latest"
   },
-  "acceptance": {
+  "campaigns": {
+    "primary": {
+      "final": [
+        "20260822T222634Z",
+        "20260822T223050Z",
+        "20260822T223504Z"
+      ],
+      "execution_commit": "1f27767ec9af121103b6d489592a9fd9052bb1b4",
+      "analysis_manifest_sha256": "1fce4eadaf9fc14c548c70128bbcee9979d73a34a7b629a985c9883c0a120a9b",
+      "campaign_manifest_sha256": {
+        "20260822T222634Z": "39a40ba223a2f2b429059b88e57c1974cae2b03f5a4015b2a5a8646c90d7c533",
+        "20260822T223050Z": "aeb788aca4794439075ad9f22ccbb3d683effaf9327748f3e8f0daaaac9e7227",
+        "20260822T223504Z": "72f6b08a0686911e23c4f8c84b6c35e9490b201f02e946c42fb3ffb54dd9bf3e"
+      }
+    },
+    "umma_device_scaling": {
+      "final": [
+        "20260824T122229Z",
+        "20260824T122239Z",
+        "20260824T122247Z"
+      ],
+      "execution_commit": "060c4aeec4598babf3701c0dcfb74ea15f828585",
+      "analysis_manifest_sha256": "244b93cac3f0f7b6e254867b8a281e70a1e65282288d3bc1ba2a284597283b6b",
+      "campaign_manifest_sha256": {
+        "20260824T122229Z": "8b1afdc4c149205f9df5f5ae91880ef927122cd56ad69c738da442e49efc96e0",
+        "20260824T122239Z": "abc9e4765437ef6d56d7bf85079eb78db4de477f46739a525f7783b1411d7606",
+        "20260824T122247Z": "412a7b01ca3055bffedcc4aea99ca936c5abc217cd181bff2de3dad9b07432bf"
+      },
+      "excluded_pilot": "20260824T122221Z"
+    }
+  },
+  "historical_acceptance": {
     "status": "ACCEPTED",
     "analysis_manifest_sha256": "b95d17910f8384187ddc94afacc9081507858de1fb69292f5f3d73bf4cc2d6ac",
-    "published_artifact_sha256": {
-      "results/memory_paths.csv": "2145cfb050a7282ff44b3e7b5c9faf27985289605fe417554133711d849b6a6d",
-      "results/umma_throughput.csv": "7efe85fc83ab440eac2ce6bc22297e498b0c149ec8ce9398dc119720f1883650",
-      "results/gemm_comparison.csv": "134ff308cf41b15dffc2fc78ff91864ff99d5e0248acc1f651ca205f6b962a0d",
-      "results/figures/memory_paths.svg": "2db567db9808c21d8feeb91e1dd24b96b8ee983e00c600559725aa0402ceed3d",
-      "results/figures/umma_throughput.svg": "a6b7f2c0384637ed27897aafc4f3b0c3b58579d3f9b9566371382371ddc98379",
-      "results/figures/gemm_comparison.svg": "64b62238359d0930b558702f1a288c35a91f29e755c000f012847960c594a999"
-    }
+    "path": "provenance/acceptance.json"
+  },
+  "published_artifact_sha256": {
+    "results/memory_paths.csv": "63dd075aa151de01d496d55bd9cb61e382c18c22f3f5ab3457acdbee58797201",
+    "results/umma_throughput.csv": "e920802c1a7be8ab7794eaf66879c604ce06982d8f16b1f460354269e7c180e3",
+    "results/gemm_comparison.csv": "d53c6a842eb51b3b4efffef237df9b6f2944708e8948a3be50b0608debc21fe4",
+    "results/umma_device_scaling.csv": "2ffc8073227c6692905b2d0e78f5912f7f4667398cd6bd98d95f2918c06b51e4",
+    "results/figures/memory_paths.svg": "6fe01d7cf1f2019fea719d1a4dfe6eb98abf9e38cfc0f14f13416d367e6409b4",
+    "results/figures/umma_throughput.svg": "b26de0bc3b641b3d7654f5e38784a0605db43f2fcaef3d8a778607c1ca212a38",
+    "results/figures/gemm_comparison.svg": "25418f34346129635318ffd5117f64a5d03a3c201658c144d75082110bcc4a90",
+    "results/figures/umma_device_scaling.svg": "0554b0d31d7a67ccf443a53bac5fc21fd2b189ff1f9d4df356fa977c16257fd7"
   },
   "original_source_identity": {
     "memory_paths/ldgsts.cu": {
