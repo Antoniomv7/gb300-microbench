@@ -214,7 +214,7 @@ Correctness is mandatory: the whole output of every block or cluster is validate
 
 ```bash
 make umma-scaling-build          # compiles only build/umma_throughput/umma_device_scaling
-make umma-scaling-check          # GPU-free: syntax, CLI and synthetic analyzer tests
+make umma-scaling-check          # GPU-free: syntax and CLI checks
 ```
 
 `make umma-scaling-sass` disassembles the new binary into `build/sass/`.

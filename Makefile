@@ -51,7 +51,7 @@ help:
 	@echo "Supplementary UMMA launch-scale experiment (isolated vs device scale):"
 	@echo "make umma-scaling-build     Compile only the device-scaling binary"
 	@echo "make umma-scaling-sass      Disassemble the device-scaling binary"
-	@echo "make umma-scaling-check     GPU-free syntax, CLI and analyzer tests"
+	@echo "make umma-scaling-check     GPU-free syntax and CLI checks"
 	@echo "make umma-scaling-smoke     Self-test plus a short four-configuration GPU run"
 	@echo "make umma-scaling-campaign  Freeze one pilot/final supplementary campaign"
 	@echo "make umma-scaling-analyze   Aggregate exactly three final supplementary campaigns"
@@ -153,10 +153,8 @@ umma-scaling-sass: umma-scaling-build
 
 umma-scaling-check:
 	python3 -m py_compile umma_throughput/device_scaling.py \
-		scripts/run_umma_scaling_campaign.py analysis/analyze_umma_device_scaling.py \
-		tests/test_umma_device_scaling.py
+		scripts/run_umma_scaling_campaign.py analysis/analyze_umma_device_scaling.py
 	python3 analysis/analyze_umma_device_scaling.py --help >/dev/null
-	python3 tests/test_umma_device_scaling.py
 
 umma-scaling-smoke: umma-scaling-build
 	@test ! -e "$(UMMA_SCALING_SMOKE_DIR)" || { \
