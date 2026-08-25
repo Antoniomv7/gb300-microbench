@@ -1,0 +1,23 @@
+{
+  "artifact_sha256": {
+    "figures/gemm_comparison.svg": "25418f34346129635318ffd5117f64a5d03a3c201658c144d75082110bcc4a90",
+    "figures/memory_paths.svg": "6fe01d7cf1f2019fea719d1a4dfe6eb98abf9e38cfc0f14f13416d367e6409b4",
+    "figures/umma_throughput.svg": "b26de0bc3b641b3d7654f5e38784a0605db43f2fcaef3d8a778607c1ca212a38",
+    "gemm_comparison.csv": "d53c6a842eb51b3b4efffef237df9b6f2944708e8948a3be50b0608debc21fe4",
+    "memory_paths.csv": "63dd075aa151de01d496d55bd9cb61e382c18c22f3f5ab3457acdbee58797201",
+    "summary.json": "8089632c5e704ba5468a25429c04e5fafd505195876196bf71abe7b2d0722d1a",
+    "umma_throughput.csv": "e920802c1a7be8ab7794eaf66879c604ce06982d8f16b1f460354269e7c180e3"
+  },
+  "campaign_ids": [
+    "20260822T222634Z",
+    "20260822T223050Z",
+    "20260822T223504Z"
+  ],
+  "campaign_manifest_sha256": {
+    "20260822T222634Z": "39a40ba223a2f2b429059b88e57c1974cae2b03f5a4015b2a5a8646c90d7c533",
+    "20260822T223050Z": "aeb788aca4794439075ad9f22ccbb3d683effaf9327748f3e8f0daaaac9e7227",
+    "20260822T223504Z": "72f6b08a0686911e23c4f8c84b6c35e9490b201f02e946c42fb3ffb54dd9bf3e"
+  },
+  "created_utc": "2026-08-24T09:15:16Z",
+  "schema_version": "gb300.analysis-manifest.v1"
+}

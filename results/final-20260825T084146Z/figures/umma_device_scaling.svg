@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="490" viewBox="0 0 1260 490" role="img" aria-label="BF16 UMMA: isolated work unit versus all usable SMs">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="34.0" y="40.0" font-family="Arial, sans-serif" font-size="22" fill="#0f172a" font-weight="700">BF16 UMMA: isolated work unit versus all usable SMs</text>
+<text x="34.0" y="66.0" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Independent throughput axes avoid mixing isolated and whole-device scales.</text>
+<text x="237.0" y="119.0" font-family="Arial, sans-serif" font-size="14" fill="#334155" text-anchor="middle" font-weight="700">Isolated work unit</text>
+<line x1="86.0" y1="376.0" x2="388.0" y2="376.0" stroke="#e2e8f0"/>
+<text x="78.0" y="380.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">0</text>
+<line x1="86.0" y1="318.2" x2="388.0" y2="318.2" stroke="#e2e8f0"/>
+<text x="78.0" y="322.2" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">8</text>
+<line x1="86.0" y1="260.5" x2="388.0" y2="260.5" stroke="#e2e8f0"/>
+<text x="78.0" y="264.5" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">17</text>
+<line x1="86.0" y1="202.8" x2="388.0" y2="202.8" stroke="#e2e8f0"/>
+<text x="78.0" y="206.8" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">25</text>
+<line x1="86.0" y1="145.0" x2="388.0" y2="145.0" stroke="#e2e8f0"/>
+<text x="78.0" y="149.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">33</text>
+<rect x="125.5" y="271.5" width="71.9" height="104.5" fill="#2563eb"/>
+<line x1="161.5" y1="271.9" x2="161.5" y2="271.0" stroke="#0f172a"/>
+<text x="161.5" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">umma_1sm</text>
+<rect x="276.5" y="169.9" width="71.9" height="206.1" fill="#d97706"/>
+<line x1="312.5" y1="170.1" x2="312.5" y2="169.8" stroke="#0f172a"/>
+<text x="312.5" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">umma_2sm</text>
+<text x="237.0" y="420.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b" text-anchor="middle">Total TFLOP/s</text>
+<text x="636.0" y="119.0" font-family="Arial, sans-serif" font-size="14" fill="#334155" text-anchor="middle" font-weight="700">Whole device</text>
+<line x1="485.0" y1="376.0" x2="787.0" y2="376.0" stroke="#e2e8f0"/>
+<text x="477.0" y="380.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">0</text>
+<line x1="485.0" y1="318.2" x2="787.0" y2="318.2" stroke="#e2e8f0"/>
+<text x="477.0" y="322.2" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">630</text>
+<line x1="485.0" y1="260.5" x2="787.0" y2="260.5" stroke="#e2e8f0"/>
+<text x="477.0" y="264.5" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">1,259</text>
+<line x1="485.0" y1="202.8" x2="787.0" y2="202.8" stroke="#e2e8f0"/>
+<text x="477.0" y="206.8" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">1,889</text>
+<line x1="485.0" y1="145.0" x2="787.0" y2="145.0" stroke="#e2e8f0"/>
+<text x="477.0" y="149.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">2,518</text>
+<rect x="524.5" y="170.3" width="71.9" height="205.7" fill="#2563eb"/>
+<line x1="560.5" y1="171.3" x2="560.5" y2="169.8" stroke="#0f172a"/>
+<text x="560.5" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">umma_1sm</text>
+<rect x="675.5" y="171.1" width="71.9" height="204.9" fill="#d97706"/>
+<line x1="711.5" y1="171.5" x2="711.5" y2="170.8" stroke="#0f172a"/>
+<text x="711.5" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">umma_2sm</text>
+<text x="636.0" y="420.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b" text-anchor="middle">Total TFLOP/s</text>
+<text x="1031.0" y="119.0" font-family="Arial, sans-serif" font-size="14" fill="#334155" text-anchor="middle" font-weight="700">Scaling efficiency</text>
+<line x1="886.0" y1="376.0" x2="1176.0" y2="376.0" stroke="#e2e8f0"/>
+<text x="878.0" y="380.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">0</text>
+<line x1="886.0" y1="318.2" x2="1176.0" y2="318.2" stroke="#e2e8f0"/>
+<text x="878.0" y="322.2" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">29</text>
+<line x1="886.0" y1="260.5" x2="1176.0" y2="260.5" stroke="#e2e8f0"/>
+<text x="878.0" y="264.5" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">57</text>
+<line x1="886.0" y1="202.8" x2="1176.0" y2="202.8" stroke="#e2e8f0"/>
+<text x="878.0" y="206.8" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">86</text>
+<line x1="886.0" y1="145.0" x2="1176.0" y2="145.0" stroke="#e2e8f0"/>
+<text x="878.0" y="149.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">114</text>
+<line x1="886.0" y1="173.9" x2="1176.0" y2="173.9" stroke="#15803d" stroke-dasharray="5 4"/>
+<rect x="924.0" y="172.2" width="69.0" height="203.8" fill="#2563eb"/>
+<line x1="958.5" y1="173.1" x2="958.5" y2="170.8" stroke="#0f172a"/>
+<text x="958.5" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">umma_1sm</text>
+<rect x="1069.0" y="170.0" width="69.0" height="206.0" fill="#d97706"/>
+<line x1="1103.5" y1="170.3" x2="1103.5" y2="169.8" stroke="#0f172a"/>
+<text x="1103.5" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">umma_2sm</text>
+<text x="1031.0" y="420.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b" text-anchor="middle">Percentage of ideal linear scaling</text>
+<text x="34.0" y="465.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b">Whole-kernel CUDA-event timing; coverage requires simultaneous residency.</text>
+</svg>

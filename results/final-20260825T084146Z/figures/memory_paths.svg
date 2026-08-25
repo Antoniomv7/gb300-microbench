@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="490" viewBox="0 0 1260 490" role="img" aria-label="LDGSTS versus TMA: effective transfer rate">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="34.0" y="40.0" font-family="Arial, sans-serif" font-size="22" fill="#0f172a" font-weight="700">LDGSTS versus TMA: effective transfer rate</text>
+<text x="34.0" y="66.0" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Mean of three campaign medians; whiskers show the observed range.</text>
+<text x="247.0" y="106.0" font-family="Arial, sans-serif" font-size="14" fill="#334155" text-anchor="middle" font-weight="700">Stages = 2</text>
+<line x1="82.0" y1="382.0" x2="412.0" y2="382.0" stroke="#e2e8f0"/>
+<text x="74.0" y="386.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">2,916</text>
+<line x1="82.0" y1="318.0" x2="412.0" y2="318.0" stroke="#e2e8f0"/>
+<text x="74.0" y="322.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">3,996</text>
+<line x1="82.0" y1="254.0" x2="412.0" y2="254.0" stroke="#e2e8f0"/>
+<text x="74.0" y="258.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">5,075</text>
+<line x1="82.0" y1="190.0" x2="412.0" y2="190.0" stroke="#e2e8f0"/>
+<text x="74.0" y="194.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">6,155</text>
+<line x1="82.0" y1="126.0" x2="412.0" y2="126.0" stroke="#e2e8f0"/>
+<text x="74.0" y="130.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">7,234</text>
+<text x="82.0" y="405.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">16 KiB</text>
+<text x="247.0" y="405.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">32 KiB</text>
+<text x="412.0" y="405.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">64 KiB</text>
+<polyline points="82.0,369.5 247.0,248.3 412.0,142.7" fill="none" stroke="#2563eb" stroke-width="2.4"/>
+<line x1="82.0" y1="369.5" x2="82.0" y2="369.4" stroke="#2563eb" stroke-width="1.5"/>
+<circle cx="82.0" cy="369.5" r="4.1" fill="#2563eb"/>
+<line x1="247.0" y1="248.4" x2="247.0" y2="248.3" stroke="#2563eb" stroke-width="1.5"/>
+<circle cx="247.0" cy="248.3" r="4.1" fill="#2563eb"/>
+<line x1="412.0" y1="142.8" x2="412.0" y2="142.6" stroke="#2563eb" stroke-width="1.5"/>
+<circle cx="412.0" cy="142.7" r="4.1" fill="#2563eb"/>
+<polyline points="82.0,374.8 247.0,255.3 412.0,142.6" fill="none" stroke="#d97706" stroke-width="2.4"/>
+<line x1="82.0" y1="374.8" x2="82.0" y2="374.7" stroke="#d97706" stroke-width="1.5"/>
+<circle cx="82.0" cy="374.8" r="4.1" fill="#d97706"/>
+<line x1="247.0" y1="255.4" x2="247.0" y2="255.2" stroke="#d97706" stroke-width="1.5"/>
+<circle cx="247.0" cy="255.3" r="4.1" fill="#d97706"/>
+<line x1="412.0" y1="142.7" x2="412.0" y2="142.5" stroke="#d97706" stroke-width="1.5"/>
+<circle cx="412.0" cy="142.6" r="4.1" fill="#d97706"/>
+<text x="642.0" y="106.0" font-family="Arial, sans-serif" font-size="14" fill="#334155" text-anchor="middle" font-weight="700">Stages = 4</text>
+<line x1="477.0" y1="382.0" x2="807.0" y2="382.0" stroke="#e2e8f0"/>
+<text x="469.0" y="386.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">2,297</text>
+<line x1="477.0" y1="318.0" x2="807.0" y2="318.0" stroke="#e2e8f0"/>
+<text x="469.0" y="322.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">3,550</text>
+<line x1="477.0" y1="254.0" x2="807.0" y2="254.0" stroke="#e2e8f0"/>
+<text x="469.0" y="258.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">4,803</text>
+<line x1="477.0" y1="190.0" x2="807.0" y2="190.0" stroke="#e2e8f0"/>
+<text x="469.0" y="194.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">6,057</text>
+<line x1="477.0" y1="126.0" x2="807.0" y2="126.0" stroke="#e2e8f0"/>
+<text x="469.0" y="130.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">7,310</text>
+<text x="477.0" y="405.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">16 KiB</text>
+<text x="642.0" y="405.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">32 KiB</text>
+<text x="807.0" y="405.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">64 KiB</text>
+<polyline points="477.0,334.1 642.0,237.0 807.0,140.5" fill="none" stroke="#2563eb" stroke-width="2.4"/>
+<line x1="477.0" y1="334.2" x2="477.0" y2="334.1" stroke="#2563eb" stroke-width="1.5"/>
+<circle cx="477.0" cy="334.1" r="4.1" fill="#2563eb"/>
+<line x1="642.0" y1="237.2" x2="642.0" y2="237.0" stroke="#2563eb" stroke-width="1.5"/>
+<circle cx="642.0" cy="237.0" r="4.1" fill="#2563eb"/>
+<line x1="807.0" y1="140.6" x2="807.0" y2="140.4" stroke="#2563eb" stroke-width="1.5"/>
+<circle cx="807.0" cy="140.5" r="4.1" fill="#2563eb"/>
+<polyline points="477.0,377.1 642.0,260.6 807.0,143.6" fill="none" stroke="#d97706" stroke-width="2.4"/>
+<line x1="477.0" y1="377.1" x2="477.0" y2="377.1" stroke="#d97706" stroke-width="1.5"/>
+<circle cx="477.0" cy="377.1" r="4.1" fill="#d97706"/>
+<line x1="642.0" y1="260.6" x2="642.0" y2="260.5" stroke="#d97706" stroke-width="1.5"/>
+<circle cx="642.0" cy="260.6" r="4.1" fill="#d97706"/>
+<line x1="807.0" y1="143.7" x2="807.0" y2="143.5" stroke="#d97706" stroke-width="1.5"/>
+<circle cx="807.0" cy="143.6" r="4.1" fill="#d97706"/>
+<text x="1037.0" y="106.0" font-family="Arial, sans-serif" font-size="14" fill="#334155" text-anchor="middle" font-weight="700">Stages = 8</text>
+<line x1="872.0" y1="382.0" x2="1202.0" y2="382.0" stroke="#e2e8f0"/>
+<text x="864.0" y="386.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">1,154</text>
+<line x1="872.0" y1="318.0" x2="1202.0" y2="318.0" stroke="#e2e8f0"/>
+<text x="864.0" y="322.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">2,608</text>
+<line x1="872.0" y1="254.0" x2="1202.0" y2="254.0" stroke="#e2e8f0"/>
+<text x="864.0" y="258.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">4,061</text>
+<line x1="872.0" y1="190.0" x2="1202.0" y2="190.0" stroke="#e2e8f0"/>
+<text x="864.0" y="194.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">5,515</text>
+<line x1="872.0" y1="126.0" x2="1202.0" y2="126.0" stroke="#e2e8f0"/>
+<text x="864.0" y="130.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">6,968</text>
+<text x="872.0" y="405.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">16 KiB</text>
+<text x="1037.0" y="405.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">32 KiB</text>
+<text x="1202.0" y="405.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">64 KiB</text>
+<polyline points="872.0,344.8 1037.0,271.0 1202.0,137.9" fill="none" stroke="#2563eb" stroke-width="2.4"/>
+<line x1="872.0" y1="344.9" x2="872.0" y2="344.8" stroke="#2563eb" stroke-width="1.5"/>
+<circle cx="872.0" cy="344.8" r="4.1" fill="#2563eb"/>
+<line x1="1037.0" y1="271.1" x2="1037.0" y2="271.0" stroke="#2563eb" stroke-width="1.5"/>
+<circle cx="1037.0" cy="271.0" r="4.1" fill="#2563eb"/>
+<line x1="1202.0" y1="138.0" x2="1202.0" y2="137.8" stroke="#2563eb" stroke-width="1.5"/>
+<circle cx="1202.0" cy="137.9" r="4.1" fill="#2563eb"/>
+<polyline points="872.0,379.9 1037.0,327.1 1202.0,221.4" fill="none" stroke="#d97706" stroke-width="2.4"/>
+<line x1="872.0" y1="379.9" x2="872.0" y2="379.9" stroke="#d97706" stroke-width="1.5"/>
+<circle cx="872.0" cy="379.9" r="4.1" fill="#d97706"/>
+<line x1="1037.0" y1="327.2" x2="1037.0" y2="327.0" stroke="#d97706" stroke-width="1.5"/>
+<circle cx="1037.0" cy="327.1" r="4.1" fill="#d97706"/>
+<line x1="1202.0" y1="221.5" x2="1202.0" y2="221.4" stroke="#d97706" stroke-width="1.5"/>
+<circle cx="1202.0" cy="221.4" r="4.1" fill="#d97706"/>
+<rect x="875" y="80" width="12" height="12" fill="#2563eb"/>
+<text x="893.0" y="90.0" font-family="Arial, sans-serif" font-size="11" fill="#334155">ldgsts</text>
+<rect x="1050" y="80" width="12" height="12" fill="#d97706"/>
+<text x="1068.0" y="90.0" font-family="Arial, sans-serif" font-size="11" fill="#334155">tma</text>
+<text x="17.0" y="256.0" font-family="Arial, sans-serif" font-size="12" fill="#334155" text-anchor="middle" transform="rotate(-90 17 256)">Effective GB/s</text>
+<text x="34.0" y="457.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b">Logical useful bytes divided by kernel time; not a direct DRAM bandwidth counter.</text>
+</svg>
