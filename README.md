@@ -82,6 +82,4 @@ make analyze FINAL_CAMPAIGNS="final-1 final-2 final-3"
 - Nsight Compute provides the DRAM cross-check and measured SM frequency.
 - Three campaigns support descriptive statistics, not significance testing or architectural peak claims.
 
-The measurement kernels originate from [gb300-gemm-anatomy](https://github.com/Antoniomv7/gb300-gemm-anatomy), commit `86f2382fb92a957035c067ae725e9e25afacab6f`.
-
 BSD 3-Clause; see `LICENSE`.
