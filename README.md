@@ -4,7 +4,7 @@ Five focused experiments on an NVIDIA B300 SXM6 AC: LDGSTS versus TMA, isolated 
 
 ## Results
 
-The first four published experiments summarize three final campaigns. Statistics are descriptive and use the median within each campaign; the separate precision comparison uses three independently timed repetitions.
+Experimental acquisition is complete. The five experiments are represented by five CSV summaries and five SVG figures directly in `results/`. The first four experiments summarize three final campaigns using the median within each campaign; the separate precision comparison uses three independently timed repetitions. All statistics are descriptive.
 
 ### LDGSTS versus TMA
 
@@ -47,9 +47,19 @@ The 2-SM launch uses 74 simultaneously resident two-CTA clusters. The final colu
 
 ### BF16 versus FP8 versus NVFP4
 
+![Matched BF16, FP8 and NVFP4 GEMM throughput](results/precision_comparison.svg)
+
 `make precision` compares the pinned official persistent CuTe DSL kernels on three shapes: `4096x4096x4096`, `8192x8192x8192`, and `32768x512x4096`. All formats use FP32 accumulation and output, a `256x128` MMA tile, a `2x1` CTA cluster, and TMA stores. NVFP4 uses `Float4E2M1FN` inputs with one `Float8E4M3FN` scale per 16 values.
 
-The command writes `results/precision_comparison.csv` and `results/precision_comparison.svg`. Vendor dense peaks are reported as published references, not measured hardware ceilings; each format verifies its own correctly represented operands before timing.
+| Shape `(M,N,K,L)` | BF16 TFLOP/s | FP8 TFLOP/s | NVFP4 TFLOP/s | FP8/BF16 | NVFP4/BF16 | NVFP4 vendor peak |
+|---|---:|---:|---:|---:|---:|---:|
+| `4096x4096x4096x1` | 1660.1 | 2926.2 | 4040.7 | 1.76× | 2.43× | 29.93% |
+| `8192x8192x8192x1` | 1444.8 | 3106.6 | 5585.1 | 2.15× | 3.87× | 41.37% |
+| `32768x512x4096x1` | 757.9 | 1727.6 | 3033.3 | 2.28× | 4.00× | 22.47% |
+
+NVFP4 reaches 5.585 PFLOP/s and improves throughput by 2.43–4.00× against the matched BF16 kernel; FP8 improves it by 1.76–2.28×. Against the independently measured cuBLASLt BF16 results above, the NVFP4 ratios are 2.31×, 2.65×, and 2.01×, respectively. The nine measured configurations pass numerical validation, and their coefficients of variation range from 0.061% to 0.452%.
+
+Each configuration uses five warm-up iterations and 20 timed iterations per repetition. Each format verifies its own correctly represented operands before timing; the format-specific operands are not a cross-format model-accuracy comparison. The published dense vendor references are 2250 TFLOP/s for BF16, 4500 TFLOP/s for FP8, and 13500 TFLOP/s for NVFP4; they are comparison references, not measured hardware ceilings. The complete measurements and figure are published in `results/precision_comparison.csv` and `results/precision_comparison.svg`.
 
 ## Build and run
 
@@ -94,5 +104,6 @@ make precision
 - Nsight Compute provides the DRAM cross-check and measured SM frequency.
 - Precision formats share shape, layouts, accumulation/output types, tile, cluster, and store path; scaled NVFP4 operands are format-specific.
 - Three campaigns support descriptive statistics, not significance testing or architectural peak claims.
+- Independent TMEM/DSMEM latency, dual-die topology, power, and per-launch DVFS measurements are outside the scope of the closed experimental phase.
 
 BSD 3-Clause; see `LICENSE`.
