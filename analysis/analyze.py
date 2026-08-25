@@ -412,22 +412,15 @@ def main():
         raise ValueError("all campaigns must use the same GPU")
 
     output = args.output if args.output.is_absolute() else ROOT / args.output
-    output.mkdir(parents=True, exist_ok=False)
-    figures = output / "figures"
-    figures.mkdir()
+    output.mkdir(parents=True, exist_ok=True)
     processors = {"memory_paths": (memory_results, memory_figure),
                   "umma_throughput": (umma_results, umma_figure),
                   "umma_device_scaling": (scaling_results, scaling_figure),
                   "gemm_comparison": (gemm_results, gemm_figure)}
-    summaries = {}
     for name, (analyze, figure) in processors.items():
         rows, summary = analyze(records)
         write_csv(output / f"{name}.csv", rows)
-        (figures / f"{name}.svg").write_text(figure(summary), encoding="utf-8")
-        summaries[name] = summary
-    document = {"campaign_ids": [record["metadata"]["campaign_id"] for record in records],
-                "gpu": records[0]["metadata"]["gpu"], "experiments": summaries}
-    (output / "summary.json").write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        (output / f"{name}.svg").write_text(figure(summary), encoding="utf-8")
     print(f"analysis: COMPLETE {output}", file=sys.stderr)
 
 

@@ -8,40 +8,40 @@ Each published value summarizes three final campaigns. Statistics are descriptiv
 
 ### LDGSTS versus TMA
 
-![LDGSTS and TMA effective transfer rates](results/figures/memory_paths.svg)
+![LDGSTS and TMA effective transfer rates](results/memory_paths.svg)
 
-LDGSTS led in eight of nine configurations. The highest means were 7.024 TB/s for LDGSTS and 6.962 TB/s for TMA. Effective bandwidth is logical useful bytes divided by kernel time; it is not a direct HBM counter.
+LDGSTS led in eight of nine configurations. The highest means were 7.026 TB/s for LDGSTS and 6.965 TB/s for TMA. Effective bandwidth is logical useful bytes divided by kernel time; it is not a direct HBM counter.
 
 ### Isolated BF16 UMMA
 
-![Isolated 1-SM and 2-SM UMMA throughput](results/figures/umma_throughput.svg)
+![Isolated 1-SM and 2-SM UMMA throughput](results/umma_throughput.svg)
 
-The strongest per-SM configuration was 1-SM UMMA at `N=256`, depth `256`: 16.354 TFLOP/s/SM after applying the measured SM clock. The corresponding 2-SM/1-SM ratio was 1.983.
+The strongest per-SM configuration was 1-SM UMMA at `N=256`, depth `256`: 16.352 TFLOP/s/SM after applying the measured SM clock. The corresponding 2-SM/1-SM ratio was 1.983.
 
 ### Whole-device BF16 UMMA
 
-![Isolated and whole-device UMMA scaling](results/figures/umma_device_scaling.svg)
+![Isolated and whole-device UMMA scaling](results/umma_device_scaling.svg)
 
 | Method | Scale | Active SMs | Total TFLOP/s | Efficiency |
 |---|---|---:|---:|---:|
-| `umma_1sm` | isolated | 1 | 15.486 | — |
-| `umma_2sm` | isolated | 2 | 30.686 | — |
-| `umma_1sm` | device | 148 | 2279.568 | 99.46% |
-| `umma_2sm` | device | 148 | 2259.351 | 99.50% |
+| `umma_1sm` | isolated | 1 | 15.022 | — |
+| `umma_2sm` | isolated | 2 | 29.611 | — |
+| `umma_1sm` | device | 148 | 2242.355 | 100.86% |
+| `umma_2sm` | device | 148 | 2233.719 | 101.94% |
 
-The 2-SM launch uses 74 simultaneously resident two-CTA clusters. Whole-device results use CUDA events; isolated instruction-throughput measurements above use `%clock64`.
+The 2-SM launch uses 74 simultaneously resident two-CTA clusters. Efficiencies slightly above 100% reflect variation between independently timed isolated and whole-device executions. Whole-device results use CUDA events; isolated instruction-throughput measurements above use `%clock64`.
 
 ### CuTe DSL versus cuBLASLt
 
-![CuTe DSL and cuBLASLt GEMM comparison](results/figures/gemm_comparison.svg)
+![CuTe DSL and cuBLASLt GEMM comparison](results/gemm_comparison.svg)
 
 | Shape `(M,N,K,L)` | Best CuTe DSL TFLOP/s | cuBLASLt TFLOP/s | Ratio |
 |---|---:|---:|---:|
-| `4096x4096x4096x1` | 1650.0 | 1749.1 | 94.33% |
-| `8192x8192x8192x1` | 1440.8 | 2102.4 | 68.53% |
-| `16384x512x4096x1` | 812.2 | 1430.3 | 56.79% |
-| `32768x512x4096x1` | 758.2 | 1502.6 | 50.46% |
-| `512x16384x4096x1` | 1270.2 | 1488.6 | 85.32% |
+| `4096x4096x4096x1` | 1658.0 | 1749.0 | 94.80% |
+| `8192x8192x8192x1` | 1441.8 | 2106.8 | 68.44% |
+| `16384x512x4096x1` | 813.5 | 1432.0 | 56.80% |
+| `32768x512x4096x1` | 758.7 | 1507.9 | 50.31% |
+| `512x16384x4096x1` | 1272.6 | 1498.4 | 84.93% |
 
 `persistent_2cta` was the strongest CuTe DSL variant for every shape. These are hot-cache measurements without kernel-level GEMM profiling.
 
@@ -65,10 +65,10 @@ make campaign CAMPAIGN_KIND=final CAMPAIGN_ID=final-2
 make campaign CAMPAIGN_KIND=final CAMPAIGN_ID=final-3
 ```
 
-Generate four CSV summaries and four SVG figures without overwriting the published results:
+Generate or replace four CSV summaries and four SVG figures directly in `results/`:
 
 ```bash
-make analyze FINAL_CAMPAIGNS="final-1 final-2 final-3" ANALYSIS_OUT=results/generated
+make analyze FINAL_CAMPAIGNS="final-1 final-2 final-3"
 ```
 
 `make sass` optionally generates the five CUDA disassemblies in `build/sass/`.
