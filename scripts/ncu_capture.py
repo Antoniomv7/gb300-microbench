@@ -100,7 +100,9 @@ def capture_case(case, directory):
     record = {key: value for key, value in case.items() if key != "metrics"}
     record.update({"status": "captured", "csv": output.name, "metrics": metrics, "units": units})
     if case["section"] == "memory_paths":
-        row = next(csv.DictReader(io.StringIO(application.stdout)))
+        lines = application.stdout.splitlines()
+        header = next(index for index, line in enumerate(lines) if line.startswith("method,"))
+        row = next(csv.DictReader(lines[header:]))
         record["useful_bytes"] = float(row["useful_bytes"])
     return record
 
