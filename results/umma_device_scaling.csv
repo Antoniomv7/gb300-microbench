@@ -1,5 +1,5 @@
-method,scale,active_sms,work_units,cluster_count,campaign_1_tflops,campaign_2_tflops,campaign_3_tflops,mean_tflops,stdev_tflops,cv_percent,mean_kernel_time_ms,mean_tflops_per_sm,scaling_efficiency_percent
+method,scale,active_sms,work_units,cluster_count,campaign_1_tflops,campaign_2_tflops,campaign_3_tflops,mean_tflops,stdev_tflops,cv_percent,mean_kernel_time_ms,mean_tflops_per_sm,per_sm_ratio_vs_isolated
 umma_1sm,isolated,1,1,0,14.960894,15.021482,15.084039,15.022138,0.061576,0.409899,17.869574,15.022138,
-umma_1sm,device_scale,148,148,0,2248.580708,2231.603836,2246.879372,2242.354638,9.349249,0.416939,17.719226,15.151045,100.859336
+umma_1sm,device_scale,148,148,0,2248.580708,2231.603836,2246.879372,2242.354638,9.349249,0.416939,17.719226,15.151045,1.008593
 umma_2sm,isolated,2,1,1,29.587162,29.608626,29.638595,29.611461,0.025833,0.087241,18.130875,14.805731,
-umma_2sm,device_scale,148,74,74,2234.305086,2229.838012,2237.013453,2233.718850,3.623464,0.162217,17.785830,15.092695,101.938205
+umma_2sm,device_scale,148,74,74,2234.305086,2229.838012,2237.013453,2233.718850,3.623464,0.162217,17.785830,15.092695,1.019382

@@ -38,17 +38,17 @@
 <line x1="711.5" y1="171.5" x2="711.5" y2="170.8" stroke="#0f172a"/>
 <text x="711.5" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">umma_2sm</text>
 <text x="636.0" y="420.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b" text-anchor="middle">Total TFLOP/s</text>
-<text x="1031.0" y="119.0" font-family="Arial, sans-serif" font-size="14" fill="#334155" text-anchor="middle" font-weight="700">Scaling efficiency</text>
+<text x="1031.0" y="119.0" font-family="Arial, sans-serif" font-size="14" fill="#334155" text-anchor="middle" font-weight="700">Per-SM throughput ratio</text>
 <line x1="886.0" y1="376.0" x2="1176.0" y2="376.0" stroke="#e2e8f0"/>
-<text x="878.0" y="380.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">0</text>
+<text x="878.0" y="380.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">0.00</text>
 <line x1="886.0" y1="318.2" x2="1176.0" y2="318.2" stroke="#e2e8f0"/>
-<text x="878.0" y="322.2" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">29</text>
+<text x="878.0" y="322.2" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">0.29</text>
 <line x1="886.0" y1="260.5" x2="1176.0" y2="260.5" stroke="#e2e8f0"/>
-<text x="878.0" y="264.5" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">57</text>
+<text x="878.0" y="264.5" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">0.57</text>
 <line x1="886.0" y1="202.8" x2="1176.0" y2="202.8" stroke="#e2e8f0"/>
-<text x="878.0" y="206.8" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">86</text>
+<text x="878.0" y="206.8" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">0.86</text>
 <line x1="886.0" y1="145.0" x2="1176.0" y2="145.0" stroke="#e2e8f0"/>
-<text x="878.0" y="149.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">114</text>
+<text x="878.0" y="149.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">1.14</text>
 <line x1="886.0" y1="173.9" x2="1176.0" y2="173.9" stroke="#15803d" stroke-dasharray="5 4"/>
 <rect x="924.0" y="172.2" width="69.0" height="203.8" fill="#2563eb"/>
 <line x1="958.5" y1="173.1" x2="958.5" y2="170.8" stroke="#0f172a"/>
@@ -56,6 +56,6 @@
 <rect x="1069.0" y="170.0" width="69.0" height="206.0" fill="#d97706"/>
 <line x1="1103.5" y1="170.3" x2="1103.5" y2="169.8" stroke="#0f172a"/>
 <text x="1103.5" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">umma_2sm</text>
-<text x="1031.0" y="420.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b" text-anchor="middle">Percentage of ideal linear scaling</text>
-<text x="34.0" y="465.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b">Whole-kernel CUDA-event timing; coverage requires simultaneous residency.</text>
+<text x="1031.0" y="420.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b" text-anchor="middle">Whole-device / isolated per SM</text>
+<text x="34.0" y="465.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b">Separate CUDA-event timings; the empirical ratio is not a bounded efficiency.</text>
 </svg>

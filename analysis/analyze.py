@@ -167,25 +167,25 @@ def scaling_results(records):
                          **compact_stats(throughputs, "tflops"),
                          "mean_kernel_time_ms": stats(times)["mean"],
                          "mean_tflops_per_sm": stats(per_sm)["mean"],
-                         "scaling_efficiency_percent": ""})
+                         "per_sm_ratio_vs_isolated": ""})
             points.append({"method": method, "scale": scale,
                            "active_sms": int(sample["planned_active_sm_count"]),
                            "work_units": int(sample["work_unit_count"]), **stats(throughputs)})
 
-    efficiencies = {}
+    scaling_ratios = {}
     for method in UMMA_METHODS:
-        # The device launches one work unit per CTA or per two-CTA cluster.
+        # Independent empirical baselines define a ratio, not a bounded efficiency.
         units = int(geometry[(method, "device_scale")]["work_unit_count"])
-        values = [100 * campaign["total_tflops"][(method, "device_scale")] /
+        values = [campaign["total_tflops"][(method, "device_scale")] /
                   (campaign["total_tflops"][(method, "isolated")] * units)
                   for campaign in campaigns]
-        efficiencies[method] = stats(values)
+        scaling_ratios[method] = stats(values)
         next(row for row in rows if row["method"] == method and row["scale"] == "device_scale")[
-            "scaling_efficiency_percent"] = efficiencies[method]["mean"]
+            "per_sm_ratio_vs_isolated"] = scaling_ratios[method]["mean"]
     ratios = [campaign["total_tflops"][("umma_2sm", "device_scale")] /
               campaign["total_tflops"][("umma_1sm", "device_scale")]
               for campaign in campaigns]
-    return rows, {"configurations": points, "scaling_efficiency": efficiencies,
+    return rows, {"configurations": points, "per_sm_ratio_vs_isolated": scaling_ratios,
                   "device_total_ratio_2sm_over_1sm": stats(ratios),
                   "hardware_sm_count": int(next(iter(geometry.values()))["hardware_sm_count"])}
 
@@ -349,7 +349,7 @@ def gemm_figure(summary):
     return "\n".join([*output, "</svg>"]) + "\n"
 
 
-def scaling_panel(output, x0, width, title, bars, unit, reference=None):
+def scaling_panel(output, x0, width, title, bars, unit, reference=None, decimals=0):
     top, bottom = 145, 376
     maximum = max([point["maximum"] for _, point in bars] + ([reference] if reference else [])) * 1.12
     y = lambda value: bottom - value * (bottom - top) / maximum
@@ -360,7 +360,8 @@ def scaling_panel(output, x0, width, title, bars, unit, reference=None):
         yy = y(value)
         output.append(f'<line x1="{x0:.1f}" y1="{yy:.1f}" x2="{x0+width:.1f}" '
                       f'y2="{yy:.1f}" stroke="#e2e8f0"/>')
-        output.append(svg_text(x0 - 8, yy + 4, f"{value:,.0f}", text_anchor="end", font_size="10"))
+        output.append(svg_text(x0 - 8, yy + 4, f"{value:,.{decimals}f}",
+                               text_anchor="end", font_size="10"))
     if reference:
         output.append(f'<line x1="{x0:.1f}" y1="{y(reference):.1f}" x2="{x0+width:.1f}" '
                       f'y2="{y(reference):.1f}" stroke="#15803d" stroke-dasharray="5 4"/>')
@@ -385,11 +386,12 @@ def scaling_figure(summary):
                   [(method, lookup[(method, "isolated")]) for method in UMMA_METHODS], "Total TFLOP/s")
     scaling_panel(output, 485, 302, "Whole device",
                   [(method, lookup[(method, "device_scale")]) for method in UMMA_METHODS], "Total TFLOP/s")
-    scaling_panel(output, 886, 290, "Scaling efficiency",
-                  [(method, summary["scaling_efficiency"][method]) for method in UMMA_METHODS],
-                  "Percentage of ideal linear scaling", reference=100.0)
+    scaling_panel(output, 886, 290, "Per-SM throughput ratio",
+                  [(method, summary["per_sm_ratio_vs_isolated"][method])
+                   for method in UMMA_METHODS],
+                  "Whole-device / isolated per SM", reference=1.0, decimals=2)
     output.append(svg_text(34, 465,
-                           "Whole-kernel CUDA-event timing; coverage requires simultaneous residency.",
+                           "Separate CUDA-event timings; the empirical ratio is not a bounded efficiency.",
                            font_size="11", fill="#64748b"))
     return "\n".join([*output, "</svg>"]) + "\n"
 

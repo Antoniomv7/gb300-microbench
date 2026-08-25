@@ -17,7 +17,7 @@ BRIDGE := build/gemm_comparison/libcublaslt_bridge.so
 export IMAGE_TAG
 
 .DEFAULT_GOAL := help
-.PHONY: help image build compile sass clean smoke campaign analyze
+.PHONY: help image build compile sass clean smoke campaign analyze precision
 
 help:
 	@echo "make image      Build the pinned CUDA/CuTe DSL image"
@@ -25,6 +25,7 @@ help:
 	@echo "make smoke      Run a short pilot of all four experiments"
 	@echo "make campaign   Run one pilot or final campaign"
 	@echo "make analyze    Summarize three final campaigns"
+	@echo "make precision  Compare matched BF16, FP8 and NVFP4 GEMMs"
 	@echo "make sass       Generate optional SASS disassemblies"
 
 image:
@@ -78,6 +79,10 @@ analyze:
 		echo "FINAL_CAMPAIGNS must contain exactly three IDs" >&2; exit 2; }
 	python3 analysis/analyze.py \
 		$(foreach id,$(FINAL_CAMPAIGNS),--campaign "$(CAMPAIGN_ROOT)/$(id)") \
+		--output "$(ANALYSIS_OUT)"
+
+precision:
+	scripts/run_gpu.sh python3 precision_comparison/precision_comparison.py \
 		--output "$(ANALYSIS_OUT)"
 
 clean:
