@@ -98,6 +98,7 @@ __global__ void ldgsts_benchmark_kernel(
             sink_acc ^= *reinterpret_cast<uint32_t*>(slot + static_cast<size_t>(tid) * kVectorBytes);
         };
 
+        // Keep asynchronous copy groups in flight while consuming older tiles.
         for (int64_t s = 0; s < tiles_per_cta; ++s) {
             const int64_t tile_idx = cta_tile_base + ((rotation + s) % tiles_per_cta);
             const uint4* tile_src = g_src + tile_idx * kElemsPerTile;

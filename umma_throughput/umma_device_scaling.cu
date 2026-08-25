@@ -23,6 +23,7 @@ __device__ __forceinline__ int current_smid() {
 __device__ __forceinline__ void residency_handshake(unsigned int* arrivals,
                                                      int* resident, int* smids) {
     if (threadIdx.x != 0) return;
+    // Every CTA must remain resident until the full launch has reported its SM.
     smids[blockIdx.x] = current_smid();
     atomicAdd(arrivals, 1u);
     const unsigned long long started = clock64();
@@ -320,6 +321,7 @@ void validate(const Plan& plan, int64_t iterations, size_t reservation,
 }
 
 size_t choose_reservation(const cudaDeviceProp& properties) {
+    // Reserve enough shared memory to limit occupancy to one CTA per SM.
     size_t reservation = (properties.sharedMemPerMultiprocessor / 2 + 1024 + 127) / 128 * 128;
     reservation = std::min(reservation, static_cast<size_t>(properties.sharedMemPerBlockOptin));
     if (reservation < static_cast<size_t>((kMLocal + kN) * kK * 2))
@@ -396,6 +398,7 @@ int main(int argc, char** argv) {
     if (active_clusters(reservation, sms) < sms / kClusterCtas)
         fail("the GPU cannot host every required two-CTA cluster");
 
+    // Compare one isolated work unit with all SMs or all two-CTA clusters.
     std::vector<Plan> plans = {
         {"umma_1sm", "isolated", kM1sm, 1, 1, 1, 0, 0,
          &umma_1sm_scaling_m128n256k16_d256},
@@ -428,6 +431,7 @@ int main(int argc, char** argv) {
               "residency_evidence,kernel_time_ms,total_tflops,tflops_per_planned_active_sm,"
               "correctness");
     for (int64_t sample = 0; sample < config.repetitions; ++sample) {
+        // Alternate measurement order to reduce systematic timing drift.
         for (size_t step = 0; step < plans.size(); ++step) {
             Plan& plan = plans[sample % 2 == 0 ? step : plans.size() - 1 - step];
             CUDA_CHECK_FATAL(cudaEventRecord(started));

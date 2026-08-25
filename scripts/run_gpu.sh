@@ -17,6 +17,7 @@ processes="$(nvidia-smi -i "${gpu_uuid}" \
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 echo "run_gpu: GPU ${BLACKWELL_GPU_INDEX} (${gpu_uuid})" >&2
 
+# Expose only the selected physical GPU; it becomes device 0 in the container.
 exec docker run --rm --gpus "device=${gpu_uuid}" \
     --user "$(id -u):$(id -g)" -e HOME=/tmp \
     -e "BLACKWELL_GPU_UUID=${gpu_uuid}" \

@@ -57,6 +57,7 @@ __device__ __forceinline__ void umma_1sm_body(int64_t iterations, TimingMode tim
 
     unsigned long long elapsed_cycles = 0;
     if (is_leader) {
+        // Time only the elected thread's UMMA issue-and-completion loop.
         const uint32_t mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&mbar));
         uint64_t start_clock = 0, end_clock = 0;
         uint32_t parity = 0;

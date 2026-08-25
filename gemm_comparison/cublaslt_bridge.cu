@@ -107,6 +107,7 @@ int gb_plan_create(int64_t m, int64_t n, int64_t k, const void* a, const void* b
 
     CHECK_LT(cublasLtCreate(&plan->handle));
     CHECK_LT(cublasLtMatmulDescCreate(&plan->operation, CUBLAS_COMPUTE_32F, CUDA_R_32F));
+    // Row-major operands implement A @ B.T with FP32 accumulation.
     const int32_t transa = CUBLAS_OP_N;
     const int32_t transb = CUBLAS_OP_T;
     const int32_t pointer_mode = CUBLASLT_POINTER_MODE_HOST;
@@ -154,6 +155,7 @@ int gb_plan_create(int64_t m, int64_t n, int64_t k, const void* a, const void* b
         candidates, &returned));
 
     int selected = -1;
+    // The published baseline uses the first supported cuBLASLt heuristic.
     for (int index = 0; index < returned; ++index) {
         if (candidates[index].state == CUBLAS_STATUS_SUCCESS) {
             selected = index;

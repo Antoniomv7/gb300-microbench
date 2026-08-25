@@ -21,6 +21,7 @@ def run(command):
 
 
 def write_rows(path, rows, expected):
+    # Persist only complete datasets whose numerical checks passed.
     if len(rows) != expected or any(row.get("correctness") not in ("OK", "PASS") for row in rows):
         raise RuntimeError(f"{path.name}: expected {expected} valid samples")
     with path.open("w", newline="", encoding="utf-8") as output:
@@ -40,6 +41,7 @@ def gpu_info():
 
 
 def memory_rows(kind):
+    # Pilots shorten the workload without changing the experimental sweep.
     working_set, passes, warmup, repetitions = (64, 2, 200, 5) if kind == "pilot" else (512, 32, 2000, 30)
     run_kind = "smoke" if kind == "pilot" else "benchmark"
     rows = []
@@ -98,6 +100,7 @@ def main():
 
     profile = {"state": "NOT_REQUESTED", "captured_count": 0}
     if args.with_ncu:
+        # Profile after timing so NCU replay cannot affect measured throughput.
         import ncu_capture
         profile = ncu_capture.capture(directory)
 

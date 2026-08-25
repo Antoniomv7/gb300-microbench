@@ -75,6 +75,7 @@ __device__ __forceinline__ void umma_2sm_body(int64_t iterations, TimingMode tim
     uint32_t parity = 0;
     for (int64_t iteration = 0; iteration < iterations; ++iteration) {
         if (is_leader) {
+            // CTA 0 issues the shared UMMA and multicasts completion to both CTAs.
             if (cta_rank == 0) {
                 issue_one_umma_2sm(tmem_d, a_desc, b_desc, idesc, 0);
 #pragma unroll

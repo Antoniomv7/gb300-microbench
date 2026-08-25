@@ -95,6 +95,7 @@ def create_operands(torch, cutlass, factory, shape):
 
 
 def reference_result(torch, operands):
+    # All candidates are checked against the same untimed IEEE-FP32 result.
     matmul = torch.backends.cuda.matmul
     previous = matmul.fp32_precision
     try:
@@ -162,6 +163,7 @@ def measure_candidate(specification, modules, shape, operands, reference, contex
         launch()
         torch.cuda.synchronize()
         validate_result(torch, operands["output"], reference, label)
+        # Measure hot-cache launches only after correctness checks and warm-up.
         for _ in range(warmup):
             launch()
         torch.cuda.synchronize()
@@ -193,11 +195,13 @@ def run(warmup, iterations):
     context = (torch, cutlass, cute, torch_stream, driver.CUstream(torch_stream.cuda_stream))
     rows = []
     for shape_index, shape in enumerate(SHAPES):
+        # Reuse identical operands and reference across every implementation.
         operands = create_operands(torch, cutlass, modules["nonpersistent"], shape)
         reference = reference_result(torch, operands)
         measurements = [measure_candidate(candidate, modules, shape, operands, reference,
                                           context, warmup, iterations)
                         for candidate in CANDIDATES]
+        # The final candidate is the cuBLASLt baseline for this geometry.
         baseline = measurements[-1]["tflops"]
         for index, (candidate, measured) in enumerate(zip(CANDIDATES, measurements)):
             rows.append({"shape_index": shape_index, "shape_id": "x".join(map(str, shape)),

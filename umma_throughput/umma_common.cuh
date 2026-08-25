@@ -235,6 +235,7 @@ inline int run_isolated(const IsolatedSpecialization& spec, const CliConfig& con
         }
     };
 
+    // Keep correctness checks and warm-up outside the timed UMMA samples.
     launch(TimingMode::kUntimed, true);
     for (int64_t index = 0; index < config.warmup_iterations; ++index)
         launch(TimingMode::kUntimed, false);

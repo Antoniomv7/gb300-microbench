@@ -66,6 +66,7 @@ def profile_case(record, section, method, **parameters):
 
 
 def memory_results(records):
+    # Reduce repetitions within each campaign before comparing independent campaigns.
     campaigns = [grouped_medians(record["data"]["memory_paths"],
                                  ("method", "stages", "bytes_in_flight_per_sm"),
                                  "effective_gbps") for record in records]
@@ -79,6 +80,7 @@ def memory_results(records):
                 key = (method, str(stages), str(size * 1024))
                 values = [campaign[key] for campaign in campaigns]
                 dram = []
+                # DRAM counters exist only for the selected NCU configurations.
                 for record in records:
                     case = profile_case(record, "memory_paths", method,
                                         stages=stages, bytes_in_flight_kib=size)
@@ -107,6 +109,7 @@ def umma_results(records):
             for method in UMMA_METHODS:
                 group = 1 if method == "umma_1sm" else 2
                 totals = [campaign[(method, str(n), str(depth))] for campaign in campaigns]
+                # A two-CTA UMMA spans two SMs, so compare throughput per SM.
                 per_sm = [value / group for value in totals]
                 rows.append({"method": method, "n": n, "depth": depth, "cta_group": group,
                              **compact_stats(per_sm, "flops_cycle_sm"),
@@ -118,6 +121,7 @@ def umma_results(records):
 
     best = max(points, key=lambda point: point["mean"])
     estimates = []
+    # Convert FLOP/cycle to TFLOP/s with the clock measured by Nsight Compute.
     metric = "sm__cycles_elapsed.avg.per_second"
     for record, campaign in zip(records, campaigns):
         case = profile_case(record, "umma_throughput", best["method"],
@@ -170,6 +174,7 @@ def scaling_results(records):
 
     efficiencies = {}
     for method in UMMA_METHODS:
+        # The device launches one work unit per CTA or per two-CTA cluster.
         units = int(geometry[(method, "device_scale")]["work_unit_count"])
         values = [100 * campaign["total_tflops"][(method, "device_scale")] /
                   (campaign["total_tflops"][(method, "isolated")] * units)

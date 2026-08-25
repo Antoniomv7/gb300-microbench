@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MEMORY_METRICS = ("dram__bytes_read.sum", "dram__bytes_write.sum")
 UMMA_METRICS = ("sm__cycles_elapsed.avg.per_second", "gpu__time_duration.sum")
 
+# Profile representative memory cases and both peak-depth UMMA variants.
 MEMORY_PLAN = tuple(
     {"section": "memory_paths", "case": f"{index:02d}_{method}_s{stages}_bif{size}",
      "method": method, "stages": stages, "bytes_in_flight_kib": size,
@@ -43,6 +44,7 @@ def parse_ncu_csv(text, requested):
     def metric_name(value):
         return next((name for name in requested if value == name or value.endswith("." + name)), None)
 
+    # NCU can export metrics as rows or as raw CSV columns.
     if "Metric Name" in header:
         name_column = header.index("Metric Name")
         value_column = header.index("Metric Value")
@@ -100,6 +102,7 @@ def capture_case(case, directory):
     record = {key: value for key, value in case.items() if key != "metrics"}
     record.update({"status": "captured", "csv": output.name, "metrics": metrics, "units": units})
     if case["section"] == "memory_paths":
+        # Profiler messages may appear before the benchmark CSV header.
         lines = application.stdout.splitlines()
         header = next(index for index, line in enumerate(lines) if line.startswith("method,"))
         row = next(csv.DictReader(lines[header:]))

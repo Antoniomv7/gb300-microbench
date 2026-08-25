@@ -76,6 +76,7 @@ __global__ void tma_validate_kernel(
     constexpr int64_t kTileHeight = compute_tile_height(kStageBytes);
 
     unsigned char* payload = smem;
+    // Each pipeline slot has an mbarrier for its asynchronous TMA transfer.
     uint64_t* bars = reinterpret_cast<uint64_t*>(smem + kPayloadBytes);
 
     const int tid = threadIdx.x;

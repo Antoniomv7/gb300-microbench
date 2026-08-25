@@ -221,6 +221,7 @@ RunStatus run_memory_case(const GpuInfo& gpu, const Specialization& spec,
     const int64_t tiles = working_set.working_set_bytes / blocks / spec.stage_bytes;
     const int64_t payload = round_up_to_multiple(spec.bytes_in_flight_per_sm + barrier_bytes,
                                                    kSmemAlignmentBytes);
+    // Reserving more than half of SM shared memory enforces one CTA per SM.
     const int64_t half_sm = round_up_to_multiple(gpu.smem_per_sm_bytes / 2 + 1,
                                                   kSmemAlignmentBytes);
     const size_t reservation = static_cast<size_t>(std::max(payload, half_sm));
@@ -253,6 +254,7 @@ RunStatus run_memory_case(const GpuInfo& gpu, const Specialization& spec,
 
     CUDA_CHECK(mismatches.allocate(1));
     CUDA_CHECK(cudaMemset(mismatches.get(), 0, sizeof(unsigned long long)));
+    // Validate the complete transfer path before collecting timed samples.
     launch_validation(source.get(), mismatches.get(), tiles, blocks, reservation);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
