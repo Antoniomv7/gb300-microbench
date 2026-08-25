@@ -93,7 +93,7 @@ extern "C" {
 const char* gb_last_error() { return g_error; }
 
 int gb_plan_create(int64_t m, int64_t n, int64_t k, const void* a, const void* b,
-                   const void* c, void* d, void* stream, Plan** result) {
+                   const void* c, void* d, void* stream, void** result) {
     if (m <= 0 || n <= 0 || k <= 0 || !a || !b || !c || !d || !result)
         return fail("invalid cuBLASLt plan arguments");
 
@@ -169,7 +169,8 @@ int gb_plan_create(int64_t m, int64_t n, int64_t k, const void* a, const void* b
     return 0;
 }
 
-int gb_plan_execute(Plan* plan) {
+int gb_plan_execute(void* handle) {
+    auto* plan = static_cast<Plan*>(handle);
     if (!plan) return fail("the cuBLASLt plan is not initialized");
     const float alpha = 1.0f;
     const float beta = 0.0f;
@@ -181,8 +182,8 @@ int gb_plan_execute(Plan* plan) {
     return 0;
 }
 
-int gb_plan_destroy(Plan* plan) {
-    delete plan;
+int gb_plan_destroy(void* handle) {
+    delete static_cast<Plan*>(handle);
     return 0;
 }
 
