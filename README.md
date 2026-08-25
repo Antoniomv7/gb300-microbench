@@ -49,7 +49,7 @@ The 2-SM launch uses 74 simultaneously resident two-CTA clusters. The final colu
 
 ![Matched BF16, FP8 and NVFP4 GEMM throughput](results/precision_comparison.svg)
 
-`make precision` compares the pinned official persistent CuTe DSL kernels on three shapes: `4096x4096x4096`, `8192x8192x8192`, and `32768x512x4096`. All formats use FP32 accumulation and output, a `256x128` MMA tile, a `2x1` CTA cluster, and TMA stores. NVFP4 uses `Float4E2M1FN` inputs with one `Float8E4M3FN` scale per 16 values.
+`make precision` compares the pinned official persistent CuTe DSL kernels on three shapes: `4096x4096x4096`, `8192x8192x8192`, and `32768x512x4096`. All formats use FP32 accumulation and output, a `256x128` MMA tile, a `2x1` CTA cluster, and TMA stores. NVFP4 uses `Float4E2M1FN` inputs with one `Float8E4M3FN` scale per 16 values. The [pinned NVFP4 kernel](https://github.com/NVIDIA/cutlass/blob/e05f953a5b3d38adc240df2ff928e0421c2abba3/examples/python/CuTeDSL/cute/blackwell/kernel/blockscaled_gemm/sm103_dense_blockscaled_gemm_persistent.py#L190-L198) fixes its accumulator to `Float32` and infers two-CTA instructions from `mma_tiler_mn[0] == 256`, matching the explicit BF16 and FP8 settings.
 
 | Shape `(M,N,K,L)` | BF16 TFLOP/s | FP8 TFLOP/s | NVFP4 TFLOP/s | FP8/BF16 | NVFP4/BF16 | NVFP4 vendor peak |
 |---|---:|---:|---:|---:|---:|---:|
@@ -59,7 +59,9 @@ The 2-SM launch uses 74 simultaneously resident two-CTA clusters. The final colu
 
 NVFP4 reaches 5.585 PFLOP/s and improves throughput by 2.43–4.00× against the matched BF16 kernel; FP8 improves it by 1.76–2.28×. Against the independently measured cuBLASLt BF16 results above, the NVFP4 ratios are 2.31×, 2.65×, and 2.01×, respectively. The nine measured configurations pass numerical validation, and their coefficients of variation range from 0.061% to 0.452%.
 
-Each configuration uses five warm-up iterations and 20 timed iterations per repetition. Each format verifies its own correctly represented operands before timing; the format-specific operands are not a cross-format model-accuracy comparison. The published dense vendor references are 2250 TFLOP/s for BF16, 4500 TFLOP/s for FP8, and 13500 TFLOP/s for NVFP4; they are comparison references, not measured hardware ceilings. The complete measurements and figure are published in `results/precision_comparison.csv` and `results/precision_comparison.svg`.
+Each configuration uses five warm-up iterations and 20 timed iterations per repetition. Each format verifies its own correctly represented operands before timing; the format-specific operands are not a cross-format model-accuracy comparison.
+
+The dense per-GPU vendor references—2250 TFLOP/s for BF16, 4500 TFLOP/s for FP8, and 13500 TFLOP/s for NVFP4—follow NVIDIA's [official HGX B300 specifications](https://www.nvidia.com/en-us/data-center/hgx/). For the eight-GPU system, the published sparse BF16 and FP8 values convert to dense single-GPU peaks as `36 / 2 / 8 = 2.25 PFLOP/s` and `72 / 2 / 8 = 4.50 PFLOP/s`; the explicitly published dense NVFP4 value gives `108 / 8 = 13.50 PFLOP/s`. These are comparison references, not measured hardware ceilings. The complete measurements and figure are published in `results/precision_comparison.csv` and `results/precision_comparison.svg`.
 
 ## Build and run
 
