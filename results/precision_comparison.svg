@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="500" viewBox="0 0 1260 500" role="img" aria-label="Low-precision GEMM: BF16 versus FP8 versus NVFP4">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="34.0" y="40.0" font-family="Arial, sans-serif" font-size="22" fill="#0f172a" font-weight="700">Low-precision GEMM: BF16 versus FP8 versus NVFP4</text>
+<text x="34.0" y="66.0" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Three repeated hot-cache measurements per matched configuration.</text>
+<line x1="86" y1="395.0" x2="1222" y2="395.0" stroke="#e2e8f0"/>
+<text x="77.0" y="399.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">0</text>
+<line x1="86" y1="344.0" x2="1222" y2="344.0" stroke="#e2e8f0"/>
+<text x="77.0" y="348.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">1,252</text>
+<line x1="86" y1="293.0" x2="1222" y2="293.0" stroke="#e2e8f0"/>
+<text x="77.0" y="297.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">2,505</text>
+<line x1="86" y1="242.0" x2="1222" y2="242.0" stroke="#e2e8f0"/>
+<text x="77.0" y="246.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">3,757</text>
+<line x1="86" y1="191.0" x2="1222" y2="191.0" stroke="#e2e8f0"/>
+<text x="77.0" y="195.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">5,009</text>
+<line x1="86" y1="140.0" x2="1222" y2="140.0" stroke="#e2e8f0"/>
+<text x="77.0" y="144.0" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="end">6,262</text>
+<rect x="685" y="83" width="12" height="12" fill="#2563eb"/>
+<text x="703.0" y="94.0" font-family="Arial, sans-serif" font-size="11" fill="#334155">BF16</text>
+<rect x="850" y="83" width="12" height="12" fill="#7c3aed"/>
+<text x="868.0" y="94.0" font-family="Arial, sans-serif" font-size="11" fill="#334155">FP8 E4M3</text>
+<rect x="1015" y="83" width="12" height="12" fill="#d97706"/>
+<text x="1033.0" y="94.0" font-family="Arial, sans-serif" font-size="11" fill="#334155">NVFP4 E2M1</text>
+<rect x="116.0" y="327.4" width="102.9" height="67.6" fill="#2563eb"/>
+<line x1="167.4" y1="327.4" x2="167.4" y2="327.4" stroke="#0f172a"/>
+<rect x="221.9" y="275.8" width="102.9" height="119.2" fill="#7c3aed"/>
+<line x1="273.3" y1="275.9" x2="273.3" y2="275.7" stroke="#0f172a"/>
+<rect x="327.8" y="230.5" width="102.9" height="164.5" fill="#d97706"/>
+<line x1="379.2" y1="230.6" x2="379.2" y2="230.1" stroke="#0f172a"/>
+<text x="275.3" y="421.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">4096×4096×4096</text>
+<rect x="494.7" y="336.2" width="102.9" height="58.8" fill="#2563eb"/>
+<line x1="546.1" y1="336.2" x2="546.1" y2="336.1" stroke="#0f172a"/>
+<rect x="600.6" y="268.5" width="102.9" height="126.5" fill="#7c3aed"/>
+<line x1="652.0" y1="268.6" x2="652.0" y2="268.4" stroke="#0f172a"/>
+<rect x="706.4" y="167.6" width="102.9" height="227.4" fill="#d97706"/>
+<line x1="757.9" y1="167.8" x2="757.9" y2="167.3" stroke="#0f172a"/>
+<text x="654.0" y="421.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">8192×8192×8192</text>
+<rect x="873.3" y="364.1" width="102.9" height="30.9" fill="#2563eb"/>
+<line x1="924.8" y1="364.2" x2="924.8" y2="364.1" stroke="#0f172a"/>
+<rect x="979.2" y="324.6" width="102.9" height="70.4" fill="#7c3aed"/>
+<line x1="1030.7" y1="324.8" x2="1030.7" y2="324.6" stroke="#0f172a"/>
+<rect x="1085.1" y="271.5" width="102.9" height="123.5" fill="#d97706"/>
+<line x1="1136.6" y1="272.0" x2="1136.6" y2="270.9" stroke="#0f172a"/>
+<text x="1032.7" y="421.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">32768×512×4096</text>
+<text x="19.0" y="268.0" font-family="Arial, sans-serif" font-size="12" fill="#334155" text-anchor="middle" transform="rotate(-90 19 268)">TFLOP/s</text>
+<text x="34.0" y="470.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b">FP32 accumulation/output; tile 256×128; cluster 2×1; NVFP4 uses one E4M3 scale per 16 values.</text>
+</svg>
