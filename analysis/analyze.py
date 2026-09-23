@@ -19,6 +19,9 @@ COLORS = {"ldgsts": "#2563eb", "tma": "#d97706",
           "umma_1sm": "#2563eb", "umma_2sm": "#d97706"}
 GEMM_COLORS = {"nonpersistent_1cta": "#2563eb", "persistent_1cta": "#7c3aed",
                "persistent_2cta": "#d97706", "heuristic_first_supported": "#15803d"}
+SCALE_COLORS = {("umma_1sm", "isolated"): "#93c5fd", ("umma_1sm", "device_scale"): "#2563eb",
+                ("umma_2sm", "isolated"): "#fcd34d", ("umma_2sm", "device_scale"): "#d97706"}
+MINIMUM_CLOCK_SAMPLES = 3
 
 
 def stats(values):
@@ -38,18 +41,23 @@ def compact_stats(values, unit):
         "cv_percent": summary["cv_percent"]}
 
 
-def read_campaign(path):
+def read_csv(path):
+    with path.open(newline="", encoding="utf-8") as source:
+        return list(csv.DictReader(source))
+
+
+def read_campaign(path, experiments):
     path = path.resolve()
     metadata = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
     if metadata["kind"] != "final":
         raise ValueError(f"{path.name} is not a final campaign")
-    datasets = {}
-    for experiment in EXPERIMENTS:
-        with (path / "raw" / f"{experiment}.csv").open(newline="", encoding="utf-8") as source:
-            datasets[experiment] = list(csv.DictReader(source))
+    datasets = {experiment: read_csv(path / "raw" / f"{experiment}.csv")
+                for experiment in experiments}
+    telemetry_path = path / "raw/umma_device_scaling_telemetry.csv"
+    telemetry = read_csv(telemetry_path) if telemetry_path.exists() else []
     profile_path = path / "ncu/index.json"
     profile = json.loads(profile_path.read_text(encoding="utf-8")) if profile_path.exists() else {}
-    return {"metadata": metadata, "data": datasets, "profile": profile}
+    return {"metadata": metadata, "data": datasets, "telemetry": telemetry, "profile": profile}
 
 
 def grouped_medians(rows, fields, value):
@@ -141,10 +149,35 @@ def umma_results(records):
                   "estimated_tflops_per_sm": ceiling}
 
 
+def clock_campaigns(record):
+    """Aggregate the clock samples recorded inside each configuration's timed launches."""
+    samples = [{"moment": float(row["unix_s"]), "sm_clock_mhz": float(row["sm_clock_mhz"]),
+                "power_w": float(row["power_w"]),
+                "temperature_c": float(row["temperature_c"])} for row in record["telemetry"]]
+    windows = defaultdict(list)
+    for row in record["data"]["umma_device_scaling"]:
+        windows[(row["method"], row["scale"])].append(
+            (float(row["host_start_unix_s"]), float(row["host_end_unix_s"])))
+    summary = {}
+    for key, spans in windows.items():
+        inside = [sample for sample in samples
+                  if any(start <= sample["moment"] <= end for start, end in spans)]
+        if len(inside) < MINIMUM_CLOCK_SAMPLES:
+            raise ValueError(f"{'/'.join(key)}: fewer than "
+                             f"{MINIMUM_CLOCK_SAMPLES} concurrent clock samples")
+        summary[key] = {"mean_sm_clock_mhz": statistics.fmean(s["sm_clock_mhz"] for s in inside),
+                        "min_sm_clock_mhz": min(s["sm_clock_mhz"] for s in inside),
+                        "max_sm_clock_mhz": max(s["sm_clock_mhz"] for s in inside),
+                        "mean_power_w": statistics.fmean(s["power_w"] for s in inside),
+                        "mean_temperature_c": statistics.fmean(s["temperature_c"] for s in inside),
+                        "clock_sample_count": len(inside)}
+    return summary
+
+
 def scaling_results(records):
     campaigns = []
     for record in records:
-        values = {}
+        values = {"clocks": clock_campaigns(record)}
         for field in ("total_tflops", "kernel_time_ms", "tflops_per_planned_active_sm"):
             values[field] = grouped_medians(record["data"]["umma_device_scaling"],
                                             ("method", "scale"), field)
@@ -160,6 +193,8 @@ def scaling_results(records):
             throughputs = [campaign["total_tflops"][key] for campaign in campaigns]
             times = [campaign["kernel_time_ms"][key] for campaign in campaigns]
             per_sm = [campaign["tflops_per_planned_active_sm"][key] for campaign in campaigns]
+            clocks = [campaign["clocks"][key] for campaign in campaigns]
+            clock = stats([entry["mean_sm_clock_mhz"] for entry in clocks])
             rows.append({"method": method, "scale": scale,
                          "active_sms": int(sample["planned_active_sm_count"]),
                          "work_units": int(sample["work_unit_count"]),
@@ -167,25 +202,52 @@ def scaling_results(records):
                          **compact_stats(throughputs, "tflops"),
                          "mean_kernel_time_ms": stats(times)["mean"],
                          "mean_tflops_per_sm": stats(per_sm)["mean"],
-                         "per_sm_ratio_vs_isolated": ""})
+                         "mean_sm_clock_mhz": clock["mean"],
+                         "stdev_sm_clock_mhz": clock["stdev_sample"],
+                         "min_sm_clock_mhz": min(entry["min_sm_clock_mhz"] for entry in clocks),
+                         "max_sm_clock_mhz": max(entry["max_sm_clock_mhz"] for entry in clocks),
+                         "mean_power_w": stats([entry["mean_power_w"] for entry in clocks])["mean"],
+                         "mean_temperature_c":
+                             stats([entry["mean_temperature_c"] for entry in clocks])["mean"],
+                         "clock_sample_count": sum(entry["clock_sample_count"] for entry in clocks),
+                         "per_sm_ratio_vs_isolated": "", "sm_clock_ratio_vs_isolated": "",
+                         "scaling_efficiency_raw": "",
+                         "scaling_efficiency_freq_normalized": ""})
             points.append({"method": method, "scale": scale,
                            "active_sms": int(sample["planned_active_sm_count"]),
-                           "work_units": int(sample["work_unit_count"]), **stats(throughputs)})
+                           "work_units": int(sample["work_unit_count"]),
+                           "clock": clock, **stats(throughputs)})
 
-    scaling_ratios = {}
+    scaling_ratios, efficiency = {}, {}
     for method in UMMA_METHODS:
         # Independent empirical baselines define a ratio, not a bounded efficiency.
         units = int(geometry[(method, "device_scale")]["work_unit_count"])
-        values = [campaign["total_tflops"][(method, "device_scale")] /
-                  (campaign["total_tflops"][(method, "isolated")] * units)
-                  for campaign in campaigns]
-        scaling_ratios[method] = stats(values)
-        next(row for row in rows if row["method"] == method and row["scale"] == "device_scale")[
-            "per_sm_ratio_vs_isolated"] = scaling_ratios[method]["mean"]
+        raw, normalized, clock_ratios = [], [], []
+        for campaign in campaigns:
+            isolated = campaign["total_tflops"][(method, "isolated")]
+            device = campaign["total_tflops"][(method, "device_scale")]
+            clock_ratio = (campaign["clocks"][(method, "device_scale")]["mean_sm_clock_mhz"] /
+                           campaign["clocks"][(method, "isolated")]["mean_sm_clock_mhz"])
+            raw.append(device / (isolated * units))
+            # Dividing by the clock ratio separates spatial scaling from the DVFS state.
+            normalized.append(device / (isolated * units * clock_ratio))
+            clock_ratios.append(clock_ratio)
+        scaling_ratios[method] = stats(raw)
+        efficiency[method] = {"units": units, "raw": stats(raw),
+                              "frequency_normalized": stats(normalized),
+                              "sm_clock_ratio": stats(clock_ratios)}
+        row = next(row for row in rows
+                   if row["method"] == method and row["scale"] == "device_scale")
+        row["per_sm_ratio_vs_isolated"] = scaling_ratios[method]["mean"]
+        row["sm_clock_ratio_vs_isolated"] = efficiency[method]["sm_clock_ratio"]["mean"]
+        row["scaling_efficiency_raw"] = efficiency[method]["raw"]["mean"]
+        row["scaling_efficiency_freq_normalized"] = \
+            efficiency[method]["frequency_normalized"]["mean"]
     ratios = [campaign["total_tflops"][("umma_2sm", "device_scale")] /
               campaign["total_tflops"][("umma_1sm", "device_scale")]
               for campaign in campaigns]
     return rows, {"configurations": points, "per_sm_ratio_vs_isolated": scaling_ratios,
+                  "scaling_efficiency": efficiency,
                   "device_total_ratio_2sm_over_1sm": stats(ratios),
                   "hardware_sm_count": int(next(iter(geometry.values()))["hardware_sm_count"])}
 
@@ -349,14 +411,17 @@ def gemm_figure(summary):
     return "\n".join([*output, "</svg>"]) + "\n"
 
 
-def scaling_panel(output, x0, width, title, bars, unit, reference=None, decimals=0):
+def scaling_panel(output, x0, width, title, bars, unit, reference=None, decimals=0,
+                  baseline=0.0):
     top, bottom = 145, 376
-    maximum = max([point["maximum"] for _, point in bars] + ([reference] if reference else [])) * 1.12
-    y = lambda value: bottom - value * (bottom - top) / maximum
+    values = [point["maximum"] for _, _, point in bars] + ([reference] if reference else [])
+    maximum = max(values) * 1.12
+    span = maximum - baseline
+    y = lambda value: bottom - (value - baseline) * (bottom - top) / span
     output.append(svg_text(x0 + width / 2, 119, title, text_anchor="middle",
                            font_size="14", font_weight="700"))
     for tick in range(5):
-        value = maximum * tick / 4
+        value = baseline + span * tick / 4
         yy = y(value)
         output.append(f'<line x1="{x0:.1f}" y1="{yy:.1f}" x2="{x0+width:.1f}" '
                       f'y2="{yy:.1f}" stroke="#e2e8f0"/>')
@@ -366,32 +431,48 @@ def scaling_panel(output, x0, width, title, bars, unit, reference=None, decimals
         output.append(f'<line x1="{x0:.1f}" y1="{y(reference):.1f}" x2="{x0+width:.1f}" '
                       f'y2="{y(reference):.1f}" stroke="#15803d" stroke-dasharray="5 4"/>')
     bar_width = width / (len(bars) * 2.1)
-    for index, (method, point) in enumerate(bars):
+    for index, (label, color, point) in enumerate(bars):
         center = x0 + (index + 0.5) * width / len(bars)
         yy = y(point["mean"])
         output.append(f'<rect x="{center-bar_width/2:.1f}" y="{yy:.1f}" width="{bar_width:.1f}" '
-                      f'height="{bottom-yy:.1f}" fill="{COLORS[method]}"/>')
+                      f'height="{bottom-yy:.1f}" fill="{color}"/>')
         output.append(f'<line x1="{center:.1f}" y1="{y(point["minimum"]):.1f}" '
                       f'x2="{center:.1f}" y2="{y(point["maximum"]):.1f}" stroke="#0f172a"/>')
-        output.append(svg_text(center, bottom + 23, method, text_anchor="middle", font_size="11"))
+        output.append(svg_text(center, bottom + 23, label, text_anchor="middle", font_size="11"))
     output.append(svg_text(x0 + width / 2, bottom + 44, unit,
                            text_anchor="middle", font_size="11", fill="#64748b"))
 
 
+SCALE_LABELS = {("umma_1sm", "isolated"): "1-SM iso", ("umma_1sm", "device_scale"): "1-SM dev",
+                ("umma_2sm", "isolated"): "2-SM iso", ("umma_2sm", "device_scale"): "2-SM dev"}
+
+
 def scaling_figure(summary):
     output = svg_start("BF16 UMMA: isolated work unit versus all usable SMs",
-                       "Independent throughput axes avoid mixing isolated and whole-device scales.")
+                       "Independent throughput axes; SM clock sampled during the same timed campaigns.",
+                       width=1640, height=500)
     lookup = {(point["method"], point["scale"]): point for point in summary["configurations"]}
-    scaling_panel(output, 86, 302, "Isolated work unit",
-                  [(method, lookup[(method, "isolated")]) for method in UMMA_METHODS], "Total TFLOP/s")
-    scaling_panel(output, 485, 302, "Whole device",
-                  [(method, lookup[(method, "device_scale")]) for method in UMMA_METHODS], "Total TFLOP/s")
-    scaling_panel(output, 886, 290, "Per-SM throughput ratio",
-                  [(method, summary["per_sm_ratio_vs_isolated"][method])
-                   for method in UMMA_METHODS],
-                  "Whole-device / isolated per SM", reference=1.0, decimals=2)
-    output.append(svg_text(34, 465,
-                           "Separate CUDA-event timings; the empirical ratio is not a bounded efficiency.",
+    efficiency = summary["scaling_efficiency"]
+    scaling_panel(output, 86, 300, "Isolated work unit",
+                  [(SCALE_LABELS[(method, "isolated")], SCALE_COLORS[(method, "isolated")],
+                    lookup[(method, "isolated")]) for method in UMMA_METHODS], "Total TFLOP/s")
+    scaling_panel(output, 482, 300, "Whole device",
+                  [(SCALE_LABELS[(method, "device_scale")], SCALE_COLORS[(method, "device_scale")],
+                    lookup[(method, "device_scale")]) for method in UMMA_METHODS], "Total TFLOP/s")
+    scaling_panel(output, 878, 300, "Mean SM clock in the same campaign",
+                  [(SCALE_LABELS[key], SCALE_COLORS[key], lookup[key]["clock"])
+                   for key in SCALE_LABELS], "MHz", baseline=1000.0)
+    scaling_panel(output, 1274, 300, "Scaling efficiency",
+                  [(label, SCALE_COLORS[(method, scale)], efficiency[method][field])
+                   for method, label, scale, field in (
+                       ("umma_1sm", "1-SM raw", "device_scale", "raw"),
+                       ("umma_1sm", "1-SM freq", "isolated", "frequency_normalized"),
+                       ("umma_2sm", "2-SM raw", "device_scale", "raw"),
+                       ("umma_2sm", "2-SM freq", "isolated", "frequency_normalized"))],
+                  "Whole-device / (units x isolated)", reference=1.0, decimals=2)
+    output.append(svg_text(34, 470,
+                           "Separate CUDA-event timings; raw efficiency also carries the DVFS "
+                           "difference that the frequency-normalized bars divide out.",
                            font_size="11", fill="#64748b"))
     return "\n".join([*output, "</svg>"]) + "\n"
 
@@ -409,10 +490,15 @@ def main():
     parser = argparse.ArgumentParser(description="Summarize three GB300 campaigns.")
     parser.add_argument("--campaign", action="append", type=Path, default=[])
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--only", default=",".join(EXPERIMENTS),
+                        help="comma-separated subset of " + ",".join(EXPERIMENTS))
     args = parser.parse_args()
     if len(args.campaign) != 3:
         parser.error("exactly three final campaigns are required")
-    records = [read_campaign(path) for path in args.campaign]
+    selected = tuple(name.strip() for name in args.only.split(",") if name.strip())
+    if any(name not in EXPERIMENTS for name in selected) or not selected:
+        parser.error("--only must name a subset of " + ",".join(EXPERIMENTS))
+    records = [read_campaign(path, selected) for path in args.campaign]
     if len({record["metadata"]["campaign_id"] for record in records}) != 3:
         raise ValueError("the three campaigns must be distinct")
     if len({record["metadata"]["gpu"]["uuid"] for record in records}) != 1:
@@ -425,6 +511,8 @@ def main():
                   "umma_device_scaling": (scaling_results, scaling_figure),
                   "gemm_comparison": (gemm_results, gemm_figure)}
     for name, (analyze, figure) in processors.items():
+        if name not in selected:
+            continue
         rows, summary = analyze(records)
         write_csv(output / f"{name}.csv", rows)
         (output / f"{name}.svg").write_text(figure(summary), encoding="utf-8")

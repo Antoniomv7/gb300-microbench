@@ -1,6 +1,8 @@
 // Compare isolated and whole-device UMMA with CUDA-event timing.
 
 #define UMMA_METHOD "umma_device_scaling"
+#include <ctime>
+
 #include "umma_common.cuh"
 
 namespace {
@@ -13,6 +15,13 @@ constexpr int kM2sm = 256;
 constexpr unsigned long long kResidencyTimeoutCycles = 2000000000ULL;
 
 enum class RunMode : int32_t { kCompute = 0, kResidency = 1 };
+
+double host_unix_seconds() {
+    // CLOCK_REALTIME matches the nvidia-smi sample timestamps used for telemetry.
+    timespec now{};
+    clock_gettime(CLOCK_REALTIME, &now);
+    return static_cast<double>(now.tv_sec) + static_cast<double>(now.tv_nsec) * 1e-9;
+}
 
 __device__ __forceinline__ int current_smid() {
     unsigned int smid = 0;
@@ -354,16 +363,16 @@ void verify_occupancy(ScalingKernel kernel, size_t reservation) {
     if (occupancy != 1) fail("device-scale UMMA requires one CTA per SM");
 }
 
-void print_row(const Plan& plan, int hardware_sms, int64_t sample,
-               int64_t iterations, float milliseconds) {
+void print_row(const Plan& plan, int hardware_sms, int64_t sample, int64_t iterations,
+               float milliseconds, double host_start, double host_end) {
     const double throughput = plan.total_flops / static_cast<double>(milliseconds) / 1e9;
     const int clusters = plan.group == 2 ? plan.work_units : 0;
     std::printf("%s,%s,%lld,%d,%lld,%d,%d,%d,%d,%d,"
-                "all_blocks_simultaneously_resident,%.6f,%.6f,%.6f,OK\n",
+                "all_blocks_simultaneously_resident,%.6f,%.6f,%.6f,%.6f,%.6f,OK\n",
                 plan.method, plan.scale, static_cast<long long>(sample), plan.group,
                 static_cast<long long>(iterations), plan.work_units, clusters, hardware_sms,
                 plan.blocks, plan.observed_sms, static_cast<double>(milliseconds),
-                throughput, throughput / plan.blocks);
+                throughput, throughput / plan.blocks, host_start, host_end);
 }
 
 void release(Plan& plan) {
@@ -416,32 +425,31 @@ int main(int argc, char** argv) {
         validate(plan, config.iterations, reservation, reference);
     }
 
-    for (Plan& plan : plans) {
-        for (int64_t index = 0; index < config.warmup_iterations; ++index) {
-            launch(plan, config.iterations, RunMode::kCompute, reservation);
-            CUDA_CHECK_FATAL(cudaDeviceSynchronize());
-        }
-    }
-
     cudaEvent_t started = nullptr, stopped = nullptr;
     CUDA_CHECK_FATAL(cudaEventCreate(&started));
     CUDA_CHECK_FATAL(cudaEventCreate(&stopped));
     std::puts("method,scale,sample_index,cta_group,iterations,work_unit_count,cluster_count,"
               "hardware_sm_count,planned_active_sm_count,observed_unique_sm_count,"
               "residency_evidence,kernel_time_ms,total_tflops,tflops_per_planned_active_sm,"
-              "correctness");
-    for (int64_t sample = 0; sample < config.repetitions; ++sample) {
-        // Alternate measurement order to reduce systematic timing drift.
-        for (size_t step = 0; step < plans.size(); ++step) {
-            Plan& plan = plans[sample % 2 == 0 ? step : plans.size() - 1 - step];
+              "host_start_unix_s,host_end_unix_s,correctness");
+    // Each configuration warms up and is then timed as one contiguous campaign, so an
+    // external clock sampler can attribute its samples to a single configuration.
+    for (Plan& plan : plans) {
+        for (int64_t index = 0; index < config.warmup_iterations; ++index) {
+            launch(plan, config.iterations, RunMode::kCompute, reservation);
+            CUDA_CHECK_FATAL(cudaDeviceSynchronize());
+        }
+        for (int64_t sample = 0; sample < config.repetitions; ++sample) {
+            const double host_start = host_unix_seconds();
             CUDA_CHECK_FATAL(cudaEventRecord(started));
             launch(plan, config.iterations, RunMode::kCompute, reservation);
             CUDA_CHECK_FATAL(cudaEventRecord(stopped));
             CUDA_CHECK_FATAL(cudaEventSynchronize(stopped));
+            const double host_end = host_unix_seconds();
             float milliseconds = 0;
             CUDA_CHECK_FATAL(cudaEventElapsedTime(&milliseconds, started, stopped));
             if (!(milliseconds > 0)) fail("kernel duration must be positive");
-            print_row(plan, sms, sample, config.iterations, milliseconds);
+            print_row(plan, sms, sample, config.iterations, milliseconds, host_start, host_end);
         }
     }
 

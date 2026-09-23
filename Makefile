@@ -5,8 +5,10 @@ CAMPAIGN_KIND ?= final
 CAMPAIGN_ID ?=
 CAMPAIGN_ROOT ?= runs
 CAMPAIGN_NCU ?= $(if $(filter pilot,$(CAMPAIGN_KIND)),0,1)
+CAMPAIGN_EXPERIMENTS ?=
 FINAL_CAMPAIGNS ?=
 ANALYSIS_OUT ?= results
+ANALYSIS_ONLY ?=
 ARCH ?= $(CUDA_ARCH)
 VIRTUAL_ARCH := compute_$(patsubst sm_%,%,$(ARCH))
 NVCC ?= nvcc
@@ -72,6 +74,7 @@ campaign: build
 	scripts/run_gpu.sh python3 scripts/run_campaign.py --kind "$(CAMPAIGN_KIND)" \
 		--output-root "$(CAMPAIGN_ROOT)" \
 		$(if $(strip $(CAMPAIGN_ID)),--campaign-id "$(CAMPAIGN_ID)") \
+		$(if $(strip $(CAMPAIGN_EXPERIMENTS)),--experiments "$(CAMPAIGN_EXPERIMENTS)") \
 		$(if $(filter 1 yes true,$(CAMPAIGN_NCU)),--with-ncu)
 
 analyze:
@@ -79,6 +82,7 @@ analyze:
 		echo "FINAL_CAMPAIGNS must contain exactly three IDs" >&2; exit 2; }
 	python3 analysis/analyze.py \
 		$(foreach id,$(FINAL_CAMPAIGNS),--campaign "$(CAMPAIGN_ROOT)/$(id)") \
+		$(if $(strip $(ANALYSIS_ONLY)),--only "$(ANALYSIS_ONLY)") \
 		--output "$(ANALYSIS_OUT)"
 
 precision:

@@ -22,14 +22,29 @@ The strongest per-SM configuration was 1-SM UMMA at `N=256`, depth `256`: 16.352
 
 ![Isolated and whole-device UMMA scaling](results/umma_device_scaling.svg)
 
-| Method | Scale | Active SMs | Total TFLOP/s | Per-SM ratio vs. isolated |
-|---|---|---:|---:|---:|
-| `umma_1sm` | isolated | 1 | 15.022 | — |
-| `umma_2sm` | isolated | 2 | 29.611 | — |
-| `umma_1sm` | device | 148 | 2242.355 | 1.009× |
-| `umma_2sm` | device | 148 | 2233.719 | 1.019× |
+| Method | Scale | Active SMs | Kernel time (ms) | Total TFLOP/s | Mean SM clock (MHz) | Mean power (W) |
+|---|---|---:|---:|---:|---:|---:|
+| `umma_1sm` | isolated | 1 | 17.285 | 15.530 | 2032.0 | 235.0 |
+| `umma_2sm` | isolated | 2 | 17.434 | 30.794 | 2032.0 | 224.4 |
+| `umma_1sm` | device | 148 | 19.063 | 2084.110 | 1894.5 | 594.5 |
+| `umma_2sm` | device | 148 | 18.982 | 2092.957 | 1911.4 | 1078.7 |
 
-The 2-SM launch uses 74 simultaneously resident two-CTA clusters. The final column is an empirical throughput ratio against a separately timed isolated work unit, not a bounded efficiency; clocks were neither locked nor measured concurrently for these launches. Whole-device results use CUDA events; isolated instruction-throughput measurements above use `%clock64`.
+| Scaling path | Clock ratio device/isolated | Raw efficiency | Frequency-normalized efficiency |
+|---|---:|---:|---:|
+| 1-SM → 148 SMs | 0.932 | 0.907 | 0.973 |
+| 2-SM → 74 clusters (148 SMs) | 0.941 | 0.918 | 0.976 |
+
+The 2-SM launch uses 74 simultaneously resident two-CTA clusters. Raw efficiency is the measured
+whole-device throughput divided by the number of work units times the separately timed isolated
+work unit; the frequency-normalized column divides that ratio by the measured SM-clock ratio, so it
+separates spatial scaling from the DVFS state. Both are empirical ratios against an independent
+baseline, not bounded efficiencies. All four configurations are timed with CUDA events, each as one
+contiguous campaign, while `nvidia-smi` samples the SM clock every 50 ms; each mean clock comes
+from the samples that fall inside that configuration's own timed launches. Clocks were not locked.
+The mean power column follows a slower telemetry filter than a 0.57 s campaign, so it is indicative
+only: the two whole-device campaigns run the same instruction stream at the same rate, and the
+lower figure belongs to the first of them. The isolated instruction-throughput measurements above
+use `%clock64` and are not part of this comparison.
 
 ### CuTe DSL versus cuBLASLt
 
@@ -89,6 +104,18 @@ Generate or replace four CSV summaries and four SVG figures directly in `results
 make analyze FINAL_CAMPAIGNS="final-1 final-2 final-3"
 ```
 
+Repeat one experiment on its own — here the whole-device UMMA scaling comparison, which needs no
+Nsight Compute pass — and regenerate only its CSV and SVG:
+
+```bash
+for i in 1 2 3; do
+  make campaign CAMPAIGN_KIND=final CAMPAIGN_ID="umma-scaling-$i" \
+    CAMPAIGN_EXPERIMENTS=umma_device_scaling CAMPAIGN_NCU=0
+done
+make analyze ANALYSIS_ONLY=umma_device_scaling \
+  FINAL_CAMPAIGNS="umma-scaling-1 umma-scaling-2 umma-scaling-3"
+```
+
 Run the independent low-precision extension without repeating the four completed campaigns:
 
 ```bash
@@ -103,9 +130,10 @@ make precision
 - Each final campaign contains 540 memory samples, 720 isolated UMMA samples, 120 device-scaling samples and 20 GEMM rows.
 - Whole-device UMMA requires simultaneous residency and observed coverage of every planned SM.
 - The UMMA baseline uses BF16 inputs and FP32 accumulation; GEMM candidates share operands and an untimed IEEE-FP32 reference.
-- Nsight Compute provides the DRAM cross-check and measured SM frequency.
+- Nsight Compute provides the DRAM cross-check and the SM frequency behind the isolated TFLOP/s estimate.
+- UMMA scaling records the SM clock with `nvidia-smi` during the same CUDA-event-timed campaigns.
 - Precision formats share shape, layouts, accumulation/output types, tile, cluster, and store path; scaled NVFP4 operands are format-specific.
 - Three campaigns support descriptive statistics, not significance testing or architectural peak claims.
-- Independent TMEM/DSMEM latency, dual-die topology, power, and per-launch DVFS measurements are outside the scope of the closed experimental phase.
+- Independent TMEM/DSMEM latency, dual-die topology, and per-launch DVFS measurements are outside the scope of the closed experimental phase.
 
 BSD 3-Clause; see `LICENSE`.
