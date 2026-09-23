@@ -5,12 +5,12 @@ CAMPAIGN_KIND ?= final
 CAMPAIGN_ID ?=
 CAMPAIGN_ROOT ?= runs
 CAMPAIGN_NCU ?= $(if $(filter pilot,$(CAMPAIGN_KIND)),0,1)
-CAMPAIGN_EXPERIMENTS ?=
 FINAL_CAMPAIGNS ?=
-ANALYSIS_OUT ?= results
-ANALYSIS_ONLY ?=
-PROFILE_ID ?= gemm-profile-final
-PRECISION_ID ?= precision-extended-final
+ANALYSIS_OUT ?=
+PROFILE_ID ?=
+PROFILE_CACHE ?=
+GEMM_SUMMARY ?=
+PRECISION_ID ?=
 ARCH ?= $(CUDA_ARCH)
 VIRTUAL_ARCH := compute_$(patsubst sm_%,%,$(ARCH))
 NVCC ?= nvcc
@@ -21,22 +21,23 @@ BRIDGE := build/gemm_comparison/libcublaslt_bridge.so
 PRECISION_BRIDGE := build/precision_comparison/libcublaslt_precision_bridge.so
 export IMAGE_TAG
 
+# Fail before any GPU work when a required variable is empty.
+require = $(if $(strip $($(1))),,$(error $(1) is required))
+
 .DEFAULT_GOAL := help
-.PHONY: help image build compile sass clean smoke campaign analyze precision \
-	gemm-profile precision-extended test check-diagnostics
+.PHONY: help image build compile clean smoke campaign analyze precision-extended gemm-profile \
+	check-diagnostics
 
 help:
 	@echo "make image              Build the pinned CUDA/CuTe DSL image"
 	@echo "make build              Compile the five benchmarks and both cuBLASLt bridges"
-	@echo "make smoke              Run a short pilot of all four experiments"
-	@echo "make campaign           Run one pilot or final campaign"
-	@echo "make analyze            Summarize three final campaigns"
-	@echo "make precision          Compare matched BF16, FP8 and NVFP4 GEMMs"
-	@echo "make gemm-profile       Profile one P2 and one cuBLASLt launch per shape"
-	@echo "make precision-extended Add cuBLASLt to the precision comparison"
-	@echo "make test               Run the focused checks inside the pinned image"
-	@echo "make check-diagnostics  Check both diagnostic output directories"
-	@echo "make sass               Generate optional SASS disassemblies"
+	@echo "make smoke              Run a short pilot of the four campaign experiments"
+	@echo "make campaign           Run one pilot or final campaign (CAMPAIGN_ID, CAMPAIGN_NCU)"
+	@echo "make analyze            Summarize three final campaigns (FINAL_CAMPAIGNS, ANALYSIS_OUT)"
+	@echo "make precision-extended Run Experiment V with its cuBLASLt baseline (PRECISION_ID)"
+	@echo "make gemm-profile       Profile P2 and cuBLASLt with Nsight Compute"
+	@echo "                        (PROFILE_CACHE=hot|cold, PROFILE_ID, GEMM_SUMMARY)"
+	@echo "make check-diagnostics  Check a GEMM profile and a precision run (PROFILE_ID, PRECISION_ID)"
 
 image:
 	docker build --platform "$(CUDA_IMAGE_PLATFORM)" \
@@ -72,13 +73,6 @@ $(PRECISION_BRIDGE): precision_comparison/cublaslt_precision_bridge.cu
 	$(NVCC) $(NVCCFLAGS) -Xcompiler -fPIC -shared -arch=$(VIRTUAL_ARCH) \
 		-code=$(ARCH) -o $@ $< -lcublasLt -lcudart
 
-sass: build
-	@mkdir -p build/sass
-	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
-		-v "$(CURDIR):/workspace" -w /workspace "$(IMAGE_TAG)" \
-		bash -c 'for binary in build/memory_paths/* build/umma_throughput/*; do \
-			cuobjdump --dump-sass "$$binary" > "build/sass/$$(basename "$$binary").sass"; done'
-
 smoke: build
 	scripts/run_gpu.sh python3 scripts/run_campaign.py --kind pilot \
 		--campaign-id "smoke-$$(date -u +%Y%m%dT%H%M%SZ)" --output-root "$(CAMPAIGN_ROOT)"
@@ -87,34 +81,31 @@ campaign: build
 	scripts/run_gpu.sh python3 scripts/run_campaign.py --kind "$(CAMPAIGN_KIND)" \
 		--output-root "$(CAMPAIGN_ROOT)" \
 		$(if $(strip $(CAMPAIGN_ID)),--campaign-id "$(CAMPAIGN_ID)") \
-		$(if $(strip $(CAMPAIGN_EXPERIMENTS)),--experiments "$(CAMPAIGN_EXPERIMENTS)") \
 		$(if $(filter 1 yes true,$(CAMPAIGN_NCU)),--with-ncu)
 
 analyze:
+	$(call require,ANALYSIS_OUT)
 	@test "$(words $(FINAL_CAMPAIGNS))" -eq 3 || { \
 		echo "FINAL_CAMPAIGNS must contain exactly three IDs" >&2; exit 2; }
 	python3 analysis/analyze.py \
 		$(foreach id,$(FINAL_CAMPAIGNS),--campaign "$(CAMPAIGN_ROOT)/$(id)") \
-		$(if $(strip $(ANALYSIS_ONLY)),--only "$(ANALYSIS_ONLY)") \
 		--output "$(ANALYSIS_OUT)"
-
-precision:
-	scripts/run_gpu.sh python3 precision_comparison/precision_comparison.py \
-		--output "$(ANALYSIS_OUT)"
-
-gemm-profile: build
-	scripts/run_gpu.sh python3 scripts/profile_gemm.py --output "$(CAMPAIGN_ROOT)/$(PROFILE_ID)"
 
 precision-extended: build
-	scripts/run_gpu.sh python3 precision_comparison/precision_comparison.py --with-cublaslt \
+	$(call require,PRECISION_ID)
+	scripts/run_gpu.sh python3 precision_comparison/precision_comparison.py \
 		--output "$(CAMPAIGN_ROOT)/$(PRECISION_ID)"
 
-test:
-	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
-		-v "$(CURDIR):/workspace" -w /workspace "$(IMAGE_TAG)" \
-		python3 -m unittest discover -s tests -v
+gemm-profile: build
+	$(call require,PROFILE_ID)
+	$(call require,PROFILE_CACHE)
+	$(call require,GEMM_SUMMARY)
+	scripts/run_gpu.sh python3 scripts/profile_gemm.py --cache-state "$(PROFILE_CACHE)" \
+		--gemm-summary "$(GEMM_SUMMARY)" --output "$(CAMPAIGN_ROOT)/$(PROFILE_ID)"
 
 check-diagnostics:
+	$(call require,PROFILE_ID)
+	$(call require,PRECISION_ID)
 	python3 scripts/check_diagnostics.py --gemm-profile "$(CAMPAIGN_ROOT)/$(PROFILE_ID)" \
 		--precision "$(CAMPAIGN_ROOT)/$(PRECISION_ID)"
 

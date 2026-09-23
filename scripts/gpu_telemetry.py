@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """Sample SM clock, power and temperature with nvidia-smi during one benchmark."""
 
-import argparse
 import csv
 import datetime as dt
 import statistics
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
 
-DEFAULT_INTERVAL_MS = 50
 QUERY_FIELDS = ("timestamp", "clocks.sm", "power.draw", "temperature.gpu")
 COLUMNS = ("sample_index", "unix_s", "received_unix_s", "timestamp",
            "sm_clock_mhz", "power_w", "temperature_c")
@@ -26,7 +23,7 @@ class ClockSampler:
     configuration afterwards without perturbing the measured kernels.
     """
 
-    def __init__(self, gpu, interval_ms=DEFAULT_INTERVAL_MS):
+    def __init__(self, gpu, interval_ms):
         self.gpu = str(gpu)
         self.interval_ms = int(interval_ms)
         self.samples = []
@@ -94,20 +91,3 @@ class ClockSampler:
                                  f"{sample[3]:.1f}", f"{sample[4]:.2f}", f"{sample[5]:.1f}"])
         return len(self.samples)
 
-
-def main():
-    parser = argparse.ArgumentParser(description="Record SM clock telemetry for a fixed time.")
-    parser.add_argument("--gpu", default="0")
-    parser.add_argument("--interval-ms", type=int, default=DEFAULT_INTERVAL_MS)
-    parser.add_argument("--seconds", type=float, default=1.0)
-    parser.add_argument("--output", required=True, type=Path)
-    args = parser.parse_args()
-    with ClockSampler(args.gpu, args.interval_ms) as sampler:
-        time.sleep(args.seconds)
-    print(f"telemetry: {sampler.verify()}", file=sys.stderr)
-    print(f"telemetry: wrote {sampler.write(args.output)} samples to {args.output}",
-          file=sys.stderr)
-
-
-if __name__ == "__main__":
-    main()

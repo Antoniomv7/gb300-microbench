@@ -3,18 +3,30 @@
 
 import argparse
 import csv
+import datetime as dt
+import hashlib
 import html
 import json
 import math
 import statistics
+import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts import ncu_capture, provenance  # noqa: E402
+
 METHODS = ("ldgsts", "tma")
 UMMA_METHODS = ("umma_1sm", "umma_2sm")
-EXPERIMENTS = ("memory_paths", "umma_throughput", "umma_device_scaling", "gemm_comparison")
+# Complete final campaigns: 18 memory and 24 UMMA configurations, 4 scaling configurations,
+# 30 repetitions each, and 5 GEMM shapes with 4 candidates.
+EXPECTED_ROWS = {"memory_paths": 540, "umma_throughput": 720, "umma_device_scaling": 120,
+                 "gemm_comparison": 20}
+EXPERIMENTS = tuple(EXPECTED_ROWS)
+NCU_CASES = {case["case"] for case in (*ncu_capture.MEMORY_PLAN, *ncu_capture.UMMA_PLAN)}
 COLORS = {"ldgsts": "#2563eb", "tma": "#d97706",
           "umma_1sm": "#2563eb", "umma_2sm": "#d97706"}
 GEMM_COLORS = {"nonpersistent_1cta": "#2563eb", "persistent_1cta": "#7c3aed",
@@ -46,18 +58,38 @@ def read_csv(path):
         return list(csv.DictReader(source))
 
 
-def read_campaign(path, experiments):
+def read_campaign(path):
+    """Load one campaign, rejecting it unless it is a complete, validated final acquisition."""
     path = path.resolve()
     metadata = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
-    if metadata["kind"] != "final":
-        raise ValueError(f"{path.name} is not a final campaign")
-    datasets = {experiment: read_csv(path / "raw" / f"{experiment}.csv")
-                for experiment in experiments}
-    telemetry_path = path / "raw/umma_device_scaling_telemetry.csv"
-    telemetry = read_csv(telemetry_path) if telemetry_path.exists() else []
+    problems = [] if metadata.get("kind") == "final" else ["not a final campaign"]
+    repository = metadata.get("environment", {}).get("repository")
+    if not repository or not repository.get("commit"):
+        problems.append("no source commit recorded")
+    elif provenance.tracked_changes(repository):
+        problems.append("acquired with modified tracked files "
+                        f"{provenance.tracked_changes(repository)}")
+    if metadata.get("telemetry", {}).get("state") != "COMPLETE":
+        problems.append("the device-scaling clock telemetry is incomplete")
+    datasets = {}
+    for experiment, expected in EXPECTED_ROWS.items():
+        rows = read_csv(path / "raw" / f"{experiment}.csv")
+        if len(rows) != expected or any(row.get("correctness") not in ("OK", "PASS")
+                                         for row in rows):
+            problems.append(f"{experiment}: expected {expected} validated rows, found {len(rows)}")
+        datasets[experiment] = rows
+    telemetry = read_csv(path / "raw/umma_device_scaling_telemetry.csv")
     profile_path = path / "ncu/index.json"
     profile = json.loads(profile_path.read_text(encoding="utf-8")) if profile_path.exists() else {}
-    return {"metadata": metadata, "data": datasets, "telemetry": telemetry, "profile": profile}
+    cases = [case.get("case") for case in profile.get("cases", [])]
+    if profile.get("state") != "COMPLETE" or len(cases) != len(NCU_CASES) or \
+            set(cases) != NCU_CASES:
+        problems.append(f"expected the {len(NCU_CASES)} Nsight Compute captures, "
+                        f"found {len(cases)}")
+    if problems:
+        raise ValueError(f"{path.name}: " + "; ".join(problems))
+    return {"path": path, "metadata": metadata, "data": datasets, "telemetry": telemetry,
+            "profile": profile}
 
 
 def grouped_medians(rows, fields, value):
@@ -486,23 +518,26 @@ def write_csv(path, rows):
                              for key, value in row.items()})
 
 
+def sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Summarize three GB300 campaigns.")
     parser.add_argument("--campaign", action="append", type=Path, default=[])
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--only", default=",".join(EXPERIMENTS),
-                        help="comma-separated subset of " + ",".join(EXPERIMENTS))
     args = parser.parse_args()
     if len(args.campaign) != 3:
         parser.error("exactly three final campaigns are required")
-    selected = tuple(name.strip() for name in args.only.split(",") if name.strip())
-    if any(name not in EXPERIMENTS for name in selected) or not selected:
-        parser.error("--only must name a subset of " + ",".join(EXPERIMENTS))
-    records = [read_campaign(path, selected) for path in args.campaign]
+    records = [read_campaign(path) for path in args.campaign]
     if len({record["metadata"]["campaign_id"] for record in records}) != 3:
         raise ValueError("the three campaigns must be distinct")
     if len({record["metadata"]["gpu"]["uuid"] for record in records}) != 1:
         raise ValueError("all campaigns must use the same GPU")
+    repositories = [record["metadata"]["environment"]["repository"] for record in records]
+    if len({json.dumps([repository["commit"], repository["source_sha256"]], sort_keys=True)
+            for repository in repositories}) != 1:
+        raise ValueError("all campaigns must use the same source commit and source files")
 
     output = args.output if args.output.is_absolute() else ROOT / args.output
     output.mkdir(parents=True, exist_ok=True)
@@ -510,18 +545,35 @@ def main():
                   "umma_throughput": (umma_results, umma_figure),
                   "umma_device_scaling": (scaling_results, scaling_figure),
                   "gemm_comparison": (gemm_results, gemm_figure)}
+    files = []
     for name, (analyze, figure) in processors.items():
-        if name not in selected:
-            continue
         rows, summary = analyze(records)
         write_csv(output / f"{name}.csv", rows)
         (output / f"{name}.svg").write_text(figure(summary), encoding="utf-8")
+        files += [f"{name}.csv", f"{name}.svg"]
+    # The manifest ties these summaries to their campaigns; the GEMM profile requires it.
+    manifest = {
+        "study": "final_campaign_analysis",
+        "created_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "command": [sys.executable, *sys.argv],
+        "gpu_uuid": records[0]["metadata"]["gpu"]["uuid"],
+        "source_commit": repositories[0]["commit"],
+        "campaigns": [{"campaign_id": record["metadata"]["campaign_id"],
+                       "path": str(record["path"]),
+                       "created_utc": record["metadata"]["created_utc"],
+                       "gpu": record["metadata"]["gpu"],
+                       "metadata_sha256": sha256(record["path"] / "metadata.json")}
+                      for record in records],
+        "analyzer_repository": provenance.repository_state(("analysis/analyze.py",)),
+        "outputs": {name: sha256(output / name) for name in files}}
+    (output / "analysis.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"analysis: COMPLETE {output}", file=sys.stderr)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+    except (OSError, ValueError, KeyError, json.JSONDecodeError,
+            subprocess.SubprocessError) as error:
         print(f"analysis: ERROR: {error}", file=sys.stderr)
         raise SystemExit(2)

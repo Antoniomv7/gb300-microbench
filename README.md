@@ -1,337 +1,126 @@
 # GB300 Blackwell Microbenchmarks
 
-Five focused experiments on an NVIDIA B300 SXM6 AC: LDGSTS versus TMA, isolated 1-SM versus 2-SM
-BF16 UMMA, whole-device UMMA scaling, three CuTe DSL GEMM variants versus cuBLASLt, and matched
-BF16/FP8/NVFP4 GEMMs.
+Five experiments on one NVIDIA B300 SXM6 AC, an independent Nsight Compute profile of the BF16 GEMM
+gap, and the checks that reject incomplete or invalid acquisitions.
 
-## Results
+## Experiments
 
-The four main experiments — `memory_paths`, `umma_throughput`, `umma_device_scaling` and
-`gemm_comparison` — come from three complete final campaigns, `final-unified-1`, `final-unified-2`
-and `final-unified-3`. Each campaign runs all four experiments back to back in one container on the
-GPU selected with `BLACKWELL_GPU_INDEX=6` (`GPU-619f7fdc-…`, driver 610.43.02), records SM-clock
-telemetry concurrently with the UMMA scaling measurements, and closes with eight Nsight Compute
-captures. Every campaign produced 540 memory samples, 720 isolated UMMA samples, 120 device-scaling
-samples and 20 GEMM rows. `make analyze` reduces each campaign by the median within it, then reports
-the mean, standard deviation and coefficient of variation across the three campaigns.
+| | Experiment | Source | Measurement | Acquired by |
+|---|---|---|---|---|
+| I | LDGSTS versus TMA | `memory_paths/` | Effective transfer rate: logical useful bytes / CUDA-event kernel time, 3 stage counts × 3 bytes-in-flight sizes | `make campaign` |
+| II | Isolated BF16 UMMA | `umma_throughput/umma_{1sm,2sm}.cu` | FLOP/cycle/SM from the per-SM `%clock64` counter, 3 N × 4 pipeline depths | `make campaign` |
+| III | Whole-device BF16 UMMA | `umma_throughput/umma_device_scaling.cu` | CUDA-event TFLOP/s of isolated and all-SM launches, with `nvidia-smi` SM-clock telemetry during the timed launches | `make campaign` |
+| IV | CuTe DSL versus cuBLASLt | `gemm_comparison/` | CUDA-event TFLOP/s of three BF16 CuTe DSL variants and the first supported cuBLASLt heuristic, 5 shapes | `make campaign` |
+| V | BF16 versus FP8 versus NVFP4 | `precision_comparison/` | `cute.testing.benchmark` TFLOP/s of the pinned persistent CuTe DSL kernels and a within-format cuBLASLt baseline, 3 shapes | `make precision-extended` |
+| — | GEMM profile | `scripts/profile_gemm.py` | Nsight Compute DRAM and L2→SM bytes, duration and SM clock of one `persistent_2cta` and one cuBLASLt launch, 3 shapes | `make gemm-profile` |
 
-The fifth experiment, `precision_comparison`, is not part of those campaigns. It runs separately
-through `make precision`, which times its own three repetitions of every format and shape in a
-single invocation and writes its CSV and figure directly.
+`analysis/analyze.py` reduces Experiments I–IV: the median within each campaign, then the mean,
+sample standard deviation and coefficient of variation across three campaigns. Experiment V repeats
+each format and shape three times in one run. All statistics are descriptive.
 
-Two diagnostics sit outside both: an Nsight Compute profile of the BF16 GEMM gap (`make
-gemm-profile`) and a cuBLASLt baseline for each precision (`make precision-extended`). Each writes to
-its own run directory; `make check-diagnostics` re-checks both from their saved files, and their
-summaries are copied into `results/`.
+## Acquisition
 
-All seven CSV summaries and six SVG figures live in `results/`. All statistics are descriptive.
-
-### LDGSTS versus TMA
-
-![LDGSTS and TMA effective transfer rates](results/memory_paths.svg)
-
-| Stages | Bytes in flight per SM | LDGSTS GB/s | TMA GB/s | TMA / LDGSTS |
-|---:|---:|---:|---:|---:|
-| 2 | 16 KiB | 3105.3 | 3017.7 | 0.972 |
-| 2 | 32 KiB | 5146.1 | 5029.2 | 0.977 |
-| 2 | 64 KiB | 6949.5 | 6958.5 | 1.001 |
-| 4 | 16 KiB | 3217.5 | 2396.4 | 0.745 |
-| 4 | 32 KiB | 5111.6 | 4666.8 | 0.913 |
-| 4 | 64 KiB | 7023.3 | 6962.6 | 0.991 |
-| 8 | 16 KiB | 2002.2 | 1202.6 | 0.601 |
-| 8 | 32 KiB | 3674.0 | 2403.6 | 0.654 |
-| 8 | 64 KiB | 6698.1 | 4802.2 | 0.717 |
-
-LDGSTS led in eight of the nine configurations; TMA led only at two stages and 64 KiB in flight,
-by 0.13%. Both peaked at four stages and 64 KiB: 7023.3 GB/s (7.023 TB/s) for LDGSTS and
-6962.6 GB/s (6.963 TB/s) for TMA. The gap widens as stages increase and bytes in flight shrink,
-reaching 0.601× at eight stages and 16 KiB. Coefficients of variation stayed at or below 0.057%.
-
-Effective bandwidth is logical useful bytes divided by kernel time; it is not a direct HBM counter.
-For the six configurations profiled with Nsight Compute, DRAM bytes read per useful byte ranged
-from 1.000008 to 1.000036, so the transferred volume matches the logical working set.
-
-### Isolated BF16 UMMA
-
-![Isolated 1-SM and 2-SM UMMA throughput](results/umma_throughput.svg)
-
-| N | Depth | 1-SM FLOP/cycle/SM | 2-SM FLOP/cycle/SM | 2-SM / 1-SM total |
-|---:|---:|---:|---:|---:|
-| 64 | 4 | 2350.7 | 1108.3 | 0.943 |
-| 64 | 16 | 3714.8 | 2845.3 | 1.532 |
-| 64 | 64 | 4933.0 | 4665.4 | 1.892 |
-| 64 | 256 | 5318.9 | 5571.9 | 2.095 |
-| 128 | 4 | 3477.4 | 2094.8 | 1.205 |
-| 128 | 16 | 6641.4 | 4728.3 | 1.424 |
-| 128 | 64 | 7695.9 | 6919.7 | 1.798 |
-| 128 | 256 | 8062.1 | 7832.0 | 1.943 |
-| 256 | 4 | 5599.3 | 3363.2 | 1.201 |
-| 256 | 16 | 7007.8 | 5995.8 | 1.711 |
-| 256 | 64 | 7838.9 | 7496.4 | 1.913 |
-| 256 | 256 | 8100.8 | 8028.3 | 1.982 |
-
-The strongest per-SM configuration was 1-SM UMMA at `N=256`, depth `256`: 8100.8 FLOP/cycle/SM,
-or 16.373 TFLOP/s/SM after applying the SM clock measured by Nsight Compute for that
-configuration. The strongest aggregate configuration was 2-SM UMMA at the same point,
-16056.6 FLOP/cycle across its two SMs.
-
-A two-CTA UMMA only pays off once the pipeline is deep. The 2-SM/1-SM aggregate ratio rises from
-0.943 at `N=64`, depth `4` — where the two-CTA launch is slower than a single SM — to 2.095 at
-`N=64`, depth `256`, and reaches 1.982 at the strongest point. These rows are timed with the
-per-SM `%clock64` counter and are reported in FLOP/cycle; the three campaign medians were identical
-for every configuration, giving a coefficient of variation of 0.000%.
-
-### Whole-device BF16 UMMA
-
-![Isolated and whole-device UMMA scaling](results/umma_device_scaling.svg)
-
-| Configuration | Active SMs | Work units | Kernel time (ms) | Total TFLOP/s | TFLOP/s per SM | Mean SM clock (MHz) | Min–max (MHz) | Mean power (W) | Mean temp (°C) |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1-SM isolated | 1 | 1 | 17.321 | 15.498 | 15.498 | 2032.0 | 2032–2032 | 237.4 | 43.9 |
-| 2-SM isolated | 2 | 1 | 17.481 | 30.712 | 15.356 | 2032.0 | 2032–2032 | 217.4 | 43.7 |
-| 1-SM whole device | 148 | 148 | 18.882 | 2104.024 | 14.216 | 1922.2 | 1882–1942 | 582.3 | 60.5 |
-| 2-SM whole device | 148 | 74 clusters | 18.713 | 2123.020 | 14.345 | 1932.7 | 1897–1935 | 1085.7 | 63.0 |
-
-| Scaling path | Clock ratio device / isolated | Raw ratio | Frequency-normalized ratio |
-|---|---:|---:|---:|
-| 1-SM → 148 SMs | 0.946 | 0.917 | 0.970 |
-| 2-SM → 74 clusters (148 SMs) | 0.951 | 0.934 | 0.982 |
-
-The raw ratio is the measured whole-device throughput divided by the number of work units times the
-separately timed isolated work unit. The frequency-normalized ratio divides that by the measured
-SM-clock ratio, separating spatial scaling from the clock the device actually ran at. Both are
-empirical ratios against an independent baseline, not bounded efficiencies, and the measured
-TFLOP/s columns are never frequency-corrected.
-
-Of the 8.3% shortfall against ideal linear scaling on the 1-SM path, the clock accounts for a
-factor of 0.946 and a factor of 0.970 remains; on the 2-SM path the 6.6% shortfall splits into
-0.951 and 0.982. Expressed per SM and per cycle, throughput falls from 7627 to 7396 FLOP/cycle/SM
-on the 1-SM path and from 7557 to 7422 on the 2-SM path. The two whole-device launches land within
-0.9% of each other, at 93.5% and 94.4% of the 2250 TFLOP/s dense BF16 vendor reference described
-below.
-
-All four configurations are timed with CUDA events. Each runs its warm-up and then its 30 timed
-repetitions as one contiguous block, the timed part spanning 0.52 s for the isolated configurations
-and 0.56 s for the whole-device ones, while `nvidia-smi` samples the SM clock, power and
-temperature every 50 ms throughout. A sample is attributed to a configuration when its
-timestamp falls inside one of that configuration's own timed launches, which yielded 10 to 11
-samples per configuration per campaign and 31 to 33 across the three; the median offset between the
-sampler's timestamps and the benchmark's own clock was 0.48 to 0.56 ms. Clocks were not locked. The
-isolated configurations held 2032 MHz with no observed variation, while the whole-device
-configurations ran lower and warmer; the min–max columns span all three campaigns, and the 1-SM
-whole-device block varied more than the 2-SM block.
-
-Power is indicative only. The two whole-device configurations execute the same instruction stream
-at nearly the same rate, yet report 582.3 W and 1085.7 W: the reading rises monotonically across
-the first whole-device block in all three campaigns and is already settled during the second, so
-the telemetry filter is slow relative to a 0.56 s block. The isolated instruction-throughput
-measurements in the previous section use `%clock64` and are not part of this comparison.
-
-### CuTe DSL versus cuBLASLt
-
-![CuTe DSL and cuBLASLt GEMM comparison](results/gemm_comparison.svg)
-
-| Shape `(M,N,K,L)` | Best CuTe DSL variant | Best CuTe DSL TFLOP/s | cuBLASLt TFLOP/s | Ratio |
-|---|---|---:|---:|---:|
-| `4096x4096x4096x1` | `persistent_2cta` | 1680.3 | 1756.0 | 95.69% |
-| `8192x8192x8192x1` | `persistent_2cta` | 1448.9 | 2107.8 | 68.74% |
-| `16384x512x4096x1` | `persistent_2cta` | 814.2 | 1438.1 | 56.62% |
-| `32768x512x4096x1` | `persistent_2cta` | 756.6 | 1507.7 | 50.18% |
-| `512x16384x4096x1` | `persistent_2cta` | 1268.7 | 1501.3 | 84.51% |
-
-`persistent_2cta` was the strongest CuTe DSL variant for every shape, and the ordering
-`nonpersistent_1cta` < `persistent_1cta` < `persistent_2cta` held in all five. The gap against
-cuBLASLt is smallest on the square 4096 shape and largest on the tall-and-thin shapes, where
-cuBLASLt was 1.8–2.0× faster. cuBLASLt peaked at 2107.8 TFLOP/s on `8192x8192x8192`, 93.7% of
-the 2250 TFLOP/s dense BF16 vendor reference. Coefficients of variation stayed at or below 1.03%.
-These are hot-cache measurements; all candidates share operands and pass the same untimed IEEE-FP32
-reference.
-
-#### Profiling the gap
-
-`make gemm-profile` captures one launch of `persistent_2cta` and one of the cuBLASLt baseline per
-shape with Nsight Compute, on three of the five shapes. Each capture reuses the campaign's operands,
-validation and warm-up, and admits exactly one kernel through an NVTX filter; all six captures
-validated before and after the profiled launch. Compulsory reads are the A and B operand bytes.
-
-| Shape `(M,N,K,L)` | Implementation | DRAM read / compulsory | DRAM read (GB) | L2→SM TMA reads (GB) | Profiled time (µs) | CUDA-event time (µs) |
-|---|---|---:|---:|---:|---:|---:|
-| `4096x4096x4096x1` | CuTe DSL | 1.08× | 0.073 | 1.61 | 83.2 | 81.8 |
-| | cuBLASLt | 1.28× | 0.086 | 1.07 | 81.7 | 78.3 |
-| `8192x8192x8192x1` | CuTe DSL | 12.29× | 3.300 | 12.88 | 751.2 | 758.9 |
-| | cuBLASLt | 4.34× | 1.165 | 8.59 | 511.5 | 521.6 |
-| `32768x512x4096x1` | CuTe DSL | 3.96× | 1.081 | 1.61 | 182.1 | 181.7 |
-| | cuBLASLt | 1.03× | 0.280 | 1.34 | 93.2 | 91.2 |
-
-DRAM traffic follows the throughput gap. On `4096x4096x4096`, where CuTe DSL reaches 95.7% of
-cuBLASLt, both read the operands close to once. On the two shapes where the gap is large, CuTe DSL
-reads 2.83× and 3.86× as many DRAM bytes as cuBLASLt: 12.3 times the operand volume on
-`8192x8192x8192`, and 3.96 times on `32768x512x4096`, where cuBLASLt reads it essentially once. CuTe
-DSL also moves 1.2–1.5× more bytes from L2 to the SMs through TMA on every shape. This is
-consistent with operand reuse across tiles, not MMA issue rate, limiting `persistent_2cta` on these
-shapes, but the capture does not isolate the scheduling cause.
-
-The profiler flushes caches before each capture (`--cache-control all`), so the DRAM columns
-describe a cold-L2 launch, whereas the CUDA-event times come from the hot-cache campaigns. Clocks were
-not locked; the profiled SM clock ran at 1818–1898 MHz. The profiled durations sit within 4.5% of the
-campaign times and are diagnostics, not performance results. Before the GEMM captures, a TMA
-calibration on the `memory_paths` kernel confirmed that the L2→SM counter reports exactly the useful
-bytes (ratio 1.000). Per-capture data are in `results/gemm_profile.csv`.
-
-### BF16 versus FP8 versus NVFP4
-
-![Matched BF16, FP8 and NVFP4 GEMM throughput](results/precision_comparison.svg)
-
-`make precision` compares the pinned official persistent CuTe DSL kernels on three shapes:
-`4096x4096x4096`, `8192x8192x8192`, and `32768x512x4096`. All formats use FP32 accumulation and
-output, a `256x128` MMA tile, a `2x1` CTA cluster, and TMA stores. NVFP4 uses `Float4E2M1FN` inputs
-with one `Float8E4M3FN` scale per 16 values. The [pinned NVFP4
-kernel](https://github.com/NVIDIA/cutlass/blob/e05f953a5b3d38adc240df2ff928e0421c2abba3/examples/python/CuTeDSL/cute/blackwell/kernel/blockscaled_gemm/sm103_dense_blockscaled_gemm_persistent.py#L190-L198)
-fixes its accumulator to `Float32` and infers two-CTA instructions from `mma_tiler_mn[0] == 256`,
-matching the explicit BF16 and FP8 settings.
-
-| Shape `(M,N,K,L)` | BF16 TFLOP/s | FP8 TFLOP/s | NVFP4 TFLOP/s | FP8/BF16 | NVFP4/BF16 |
-|---|---:|---:|---:|---:|---:|
-| `4096x4096x4096x1` | 1685.1 | 2943.4 | 4044.9 | 1.75× | 2.40× |
-| `8192x8192x8192x1` | 1457.3 | 3127.3 | 5562.0 | 2.15× | 3.82× |
-| `32768x512x4096x1` | 758.3 | 1724.0 | 3003.7 | 2.27× | 3.96× |
-
-| Shape `(M,N,K,L)` | BF16 vs. 2250 | FP8 vs. 4500 | NVFP4 vs. 13500 |
-|---|---:|---:|---:|
-| `4096x4096x4096x1` | 74.89% | 65.41% | 29.96% |
-| `8192x8192x8192x1` | 64.77% | 69.49% | 41.20% |
-| `32768x512x4096x1` | 33.70% | 38.31% | 22.25% |
-
-NVFP4 reaches 5562.0 TFLOP/s (5.562 PFLOP/s) and improves throughput by 2.40–3.96× against the
-matched BF16 kernel; FP8 improves it by 1.75–2.27×. Against the cuBLASLt BF16 results measured in
-the campaigns above, the NVFP4 ratios are 2.30×, 2.64× and 1.99×. The BF16 rows agree with the
-campaigns' `persistent_2cta` results to within 0.6% on the three shapes the two experiments share,
-which is consistent across two independent acquisitions. The nine measured configurations pass
-numerical validation, and their coefficients of variation range from 0.027% to 0.219%.
-
-Each configuration uses five warm-up iterations and 20 timed iterations per repetition, and three
-repetitions per format and shape. Each format verifies its own correctly represented operands
-before timing; the format-specific operands are not a cross-format model-accuracy comparison.
-
-The dense per-GPU vendor references — 2250 TFLOP/s for BF16, 4500 TFLOP/s for FP8, and
-13500 TFLOP/s for NVFP4 — follow NVIDIA's [official HGX B300
-specifications](https://www.nvidia.com/en-us/data-center/hgx/). For the eight-GPU system, the
-published sparse BF16 and FP8 values convert to dense single-GPU peaks as `36 / 2 / 8 = 2.25
-PFLOP/s` and `72 / 2 / 8 = 4.50 PFLOP/s`; the explicitly published dense NVFP4 value gives
-`108 / 8 = 13.50 PFLOP/s`. These are comparison references, not measured hardware ceilings.
-
-#### CuTe DSL versus cuBLASLt by precision
-
-![CuTe DSL and cuBLASLt throughput by precision](results/precision_cutedsl_vs_cublaslt.svg)
-
-`make precision-extended` reruns the three CuTe DSL repetitions and times cuBLASLt on the same
-logical operands in each format. cuBLASLt receives byte-identical BF16, FP8 and packed FP4 data and,
-for NVFP4, byte-identical `UE4M3` scales in its documented 16-element block-scaling layout. It uses
-FP32 compute, FP32 C/D, `alpha = 1` and `beta = 0`. The plan is the first supported result of
-`cublasLtMatmulAlgoGetHeuristic` under a 64 MiB workspace, without a timed search, and both
-implementations are timed by the same `cute.testing.benchmark` call with a hot L2.
-
-| Shape `(M,N,K,L)` | Format | CuTe DSL TFLOP/s | cuBLASLt TFLOP/s | CuTe DSL / cuBLASLt | cuBLASLt vs. vendor reference |
-|---|---|---:|---:|---:|---:|
-| `4096x4096x4096x1` | BF16 | 1682.4 | 1767.2 | 95.20% | 78.54% |
-| | FP8 | 2934.7 | 3193.0 | 91.91% | 70.96% |
-| | NVFP4 | 4029.0 | 4781.7 | 84.26% | 35.42% |
-| `8192x8192x8192x1` | BF16 | 1459.6 | 2100.8 | 69.48% | 93.37% |
-| | FP8 | 3127.9 | 3943.2 | 79.32% | 87.63% |
-| | NVFP4 | 5568.2 | 7552.6 | 73.73% | 55.95% |
-| `32768x512x4096x1` | BF16 | 756.6 | 1516.3 | 49.90% | 67.39% |
-| | FP8 | 1717.4 | 2669.9 | 64.33% | 59.33% |
-| | NVFP4 | 2994.9 | 4100.9 | 73.03% | 30.38% |
-
-cuBLASLt was faster in all nine configurations. The BF16 ratios reproduce the campaigns' gap to
-within 0.8 percentage points, and the BF16 cuBLASLt rows agree with the campaigns' cuBLASLt results
-to within 0.7%. Lower precision narrows the gap on the two shapes where it is large, from 69.5%
-to 79.3% and 73.7% on `8192x8192x8192` and from 49.9% to 64.3% and 73.0% on `32768x512x4096`,
-but widens it on `4096x4096x4096`, from 95.2% to 84.3% for NVFP4. cuBLASLt peaked at 7552.6
-TFLOP/s (7.553 PFLOP/s) with NVFP4 on `8192x8192x8192`, 1.36× the CuTe DSL NVFP4 peak.
-
-All 99 validation records passed against an IEEE-FP32 reference formed from the exactly represented
-operands, and the cuBLASLt outputs were bit-identical to the CuTe DSL outputs for all 36 operand
-sets. The CuTe DSL throughput in this run agrees with the `make precision` table above to within
-0.39%, and coefficients of variation range from 0.002% to 0.864%. The selected cuBLASLt kernels are
-`nvjet_sm103` kernels in eight configurations and a CUTLASS block-scaled kernel for NVFP4 on
-`8192x8192x8192`; all use two-CTA instructions. Per-configuration kernels and repetitions are in
-`results/precision_cutedsl_vs_cublaslt.csv`.
-
-## Build and run
-
-The pinned CUDA image, CUTLASS commit and Python package versions are in `VERSIONS.env`.
+The pinned CUDA image, CUTLASS commit and Python packages are in `VERSIONS.env`. Acquire from a
+committed tree: every run records the commit and the SHA-256 of its sources, and the analyzer and
+checker reject runs made with modified tracked files.
 
 ```bash
 make image
 make build
-export BLACKWELL_GPU_INDEX=6
+export BLACKWELL_GPU_INDEX=<index>   # nvidia-smi -L
 ```
 
-Index 6 identifies the B300 used for this acquisition; select the index of an available B300 on
-your system with `nvidia-smi -L`. `scripts/run_gpu.sh` resolves the index to a GPU UUID, refuses a
-GPU that already has compute processes, and exposes only that GPU to the container.
-
-Run the three complete final campaigns. Each one runs all four main experiments, records the UMMA
-scaling clock telemetry, and finishes with the Nsight Compute captures:
+`scripts/run_gpu.sh` resolves the index to a GPU UUID, refuses a GPU that already runs compute
+processes, and exposes only that GPU to the container.
 
 ```bash
-make campaign CAMPAIGN_KIND=final CAMPAIGN_ID=final-unified-1
-make campaign CAMPAIGN_KIND=final CAMPAIGN_ID=final-unified-2
-make campaign CAMPAIGN_KIND=final CAMPAIGN_ID=final-unified-3
+# Experiments I–IV: three complete final campaigns on the same GPU
+make campaign CAMPAIGN_KIND=final CAMPAIGN_ID=<id1> CAMPAIGN_NCU=1
+make campaign CAMPAIGN_KIND=final CAMPAIGN_ID=<id2> CAMPAIGN_NCU=1
+make campaign CAMPAIGN_KIND=final CAMPAIGN_ID=<id3> CAMPAIGN_NCU=1
+make analyze FINAL_CAMPAIGNS="<id1> <id2> <id3>" ANALYSIS_OUT=<directory>
+
+# Experiment V: nine-row CuTe DSL summary and 18-row CuTe DSL/cuBLASLt comparison
+make precision-extended PRECISION_ID=<id>
+
+# GEMM profile against the new analysis, then the diagnostic checks
+make gemm-profile PROFILE_CACHE=hot PROFILE_ID=<id> GEMM_SUMMARY=<directory>/gemm_comparison.csv
+make check-diagnostics PROFILE_ID=<id> PRECISION_ID=<id>
 ```
 
-Produce the four CSV summaries and four SVG figures in `results/`:
+Campaign, precision and profile IDs name new directories under `runs/`; an existing directory is
+never reused. `ANALYSIS_OUT` and `GEMM_SUMMARY` are paths inside the repository, because the profile
+runs in a container that mounts only the repository; `runs/<analysis-id>` keeps a new analysis out
+of `results/`. `make smoke` runs a short pilot campaign of Experiments I–IV. Pilots are never
+accepted by `make analyze`.
 
-```bash
-make analyze FINAL_CAMPAIGNS="final-unified-1 final-unified-2 final-unified-3"
-```
+`results/` is replaced only after the new raw data have passed `make analyze` and
+`make check-diagnostics` and have been reviewed.
 
-Run the precision comparison, which is independent of the campaigns and writes the fifth CSV and
-figure itself:
+## Validation
 
-```bash
-make precision
-```
+An acquisition is rejected, rather than summarized, when any of these fails:
 
-Run the two diagnostics and check them from their saved files. They write to
-`runs/gemm-profile-final` and `runs/precision-extended-final` (override with `PROFILE_ID` and
-`PRECISION_ID`); `results/gemm_profile.csv` and `results/precision_cutedsl_vs_cublaslt.{csv,svg}`
-are copies of their summaries:
+- **Campaign.** Every benchmark validates its numerical result before its timing is kept, and a
+  dataset is written only when all its rows validated: 540 memory, 720 isolated UMMA, 120
+  device-scaling and 20 GEMM rows. Whole-device UMMA requires simultaneous residency on every
+  planned SM. The clock telemetry must span the whole timed scaling block, agree with the host
+  clock to within 1 s, and hold at least 3 samples inside each configuration's timed launches.
+  GEMM candidates share operands and must match an untimed IEEE-FP32 reference.
+- **Analysis.** Exactly three distinct final campaigns, each with its complete row counts, telemetry
+  and eight Nsight Compute captures; one GPU UUID; one source commit with identical source hashes;
+  no modified tracked files. `analysis.json` records the campaigns and the SHA-256 of every output.
+- **Experiment V.** Each CuTe DSL output, including every timed repetition's, and each cuBLASLt
+  output before and after timing must match an IEEE-FP32 product of the exactly represented,
+  dequantized operands. cuBLASLt consumes the same bytes as CuTe DSL (data and NVFP4 scales), uses
+  FP32 compute and output confirmed by `cublasLtMatmulAlgoCheck`, and keeps one algorithm across
+  operand sets. A negative control confirms that the tolerance check rejects a mismatch. The
+  protocol is fixed at three repetitions of 5 warm-up and 20 timed launches.
+- **GEMM profile.** `GEMM_SUMMARY` must be the `gemm_comparison.csv` of a `make analyze` output
+  whose `analysis.json` names the profiled GPU and records that file's SHA-256; all six
+  shape/variant rows must exist. Each capture validates before and after the profiled launch, holds
+  exactly one kernel inside the NVTX range, and shares operands with the other implementation of
+  its shape. The L2→SM metric is used only after a TMA stream reproduces its useful bytes to within
+  0.1%.
 
-```bash
-make gemm-profile
-make precision-extended
-make check-diagnostics
-```
+`make check-diagnostics` repeats these checks from the saved files of a profile and a precision run,
+independently of the scripts' own verdicts.
 
-`make test` runs the focused checks of the diagnostic tooling inside the pinned image; it needs no
-GPU.
+## Timed results and Nsight Compute diagnostics
 
-`make smoke` is an optional short pilot of the four main experiments; it is not one of the three
-final campaigns and its output is not used by `make analyze`. `make sass` optionally generates the
-five CUDA disassemblies in `build/sass/`.
+Throughput comes only from timed launches without a profiler attached: CUDA events for Experiments
+I, III, IV and V, and `%clock64` for Experiment II. Clocks are not locked, and the caches are hot
+after the warm-up launches.
 
-## Measurement boundaries
+Nsight Compute always runs in separate processes after the timing. In each campaign it captures
+DRAM bytes for six memory configurations, reported as DRAM bytes read per useful byte beside the
+Experiment I rates, and the SM clock of both peak-depth UMMA configurations, used only to express
+the strongest Experiment II configuration in TFLOP/s/SM. The GEMM profile's durations and byte
+counts are diagnostics beside the CUDA-event reference it records, never replacements for it:
 
-- Numerical correctness is mandatory before timing.
-- Each final campaign contains 540 memory samples, 720 isolated UMMA samples, 120 device-scaling
-  samples and 20 GEMM rows.
-- Whole-device UMMA requires simultaneous residency and observed coverage of every planned SM.
-- UMMA scaling is timed with CUDA events and records the SM clock with `nvidia-smi` during the same
-  timed campaigns; power and temperature are recorded alongside and are indicative only.
-- Nsight Compute contributes eight captures per campaign: the DRAM cross-check on six memory
-  configurations and the SM frequency behind the isolated UMMA TFLOP/s estimate.
-- The UMMA baseline uses BF16 inputs and FP32 accumulation; GEMM candidates share operands and an
-  untimed IEEE-FP32 reference.
-- Precision formats share shape, layouts, accumulation/output types, tile, cluster, and store path;
-  scaled NVFP4 operands are format-specific.
-- The GEMM profile is one cold-L2 launch per implementation and shape; its durations and byte
-  counts are diagnostics, and the CUDA-event campaign results remain the performance data.
-- The per-precision cuBLASLt baseline uses the first heuristic plan, not a timed algorithm search.
-- Three campaigns, and three repetitions for the precision comparison, support descriptive
-  statistics, not significance testing or architectural peak claims.
-- Independent TMEM/DSMEM latency, dual-die topology, and per-launch DVFS measurements are outside
-  the scope of the closed experimental phase.
+- `PROFILE_CACHE=hot` uses application replay with `--cache-control none`: every replay pass reruns
+  the operand setup, validation and the campaigns' two warm-up launches before the one NVTX-selected
+  launch.
+- `PROFILE_CACHE=cold` uses kernel replay with `--cache-control all`, flushing the caches before the
+  profiled launch.
+
+Each profile directory holds one cache state, recorded in `index.json` and in every row of
+`gemm_profile.csv`; compare DRAM counters only between captures made with the same state.
+
+## Published results
+
+`results/` holds the previous acquisition, made before runs recorded their source commit:
+
+- `memory_paths`, `umma_throughput`, `umma_device_scaling` and `gemm_comparison` (CSV and SVG):
+  final campaigns `final-unified-1` to `-3` on `GPU-619f7fdc-5f98-8c37-fe89-0465d6130baf`,
+  published in commit `ade92ad`.
+- `precision_comparison` (CSV and SVG): the former CuTe DSL-only `make precision` run, last
+  updated in commit `ade92ad`.
+- `precision_cutedsl_vs_cublaslt` (CSV and SVG) and `gemm_profile.csv`: separate runs on the same
+  GPU, published in commit `5b5a95c`. `gemm_profile.csv` is the cold-cache profile; its CUDA-event
+  columns come from the `gemm_comparison.csv` above.
+
+These files are kept as historical evidence and are not results of the new campaigns. Their raw
+runs predate the provenance fields that `make analyze` and `make check-diagnostics` now require.
 
 BSD 3-Clause; see `LICENSE`.

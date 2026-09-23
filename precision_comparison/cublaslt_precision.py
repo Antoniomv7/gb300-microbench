@@ -247,6 +247,17 @@ def compare(torch, precision, output, expected):
                 (expected != expected.to(torch.float16).float()).sum().item())}
 
 
+def check_validator(torch):
+    """Negative control: every format's check must reject one perturbed value and pass a copy."""
+    expected = torch.full((4, 4), 100.0)
+    perturbed = expected.clone()
+    perturbed[1, 2] += 2  # beyond atol + rtol * 100 for every format (at most 1.1)
+    for precision in TOLERANCES:
+        if (compare(torch, precision, perturbed, expected)["mismatches"] != 1 or
+                compare(torch, precision, expected.clone(), expected)["status"] != "PASS"):
+            raise RuntimeError(f"the {precision} validation check does not reject a mismatch")
+
+
 @contextlib.contextmanager
 def capture_dense(module):
     """Record each operand set that the dense example's run() prepares."""
@@ -348,6 +359,7 @@ class Baseline:
         import torch
         from cuda.bindings import driver
 
+        check_validator(torch)
         self.torch, self.driver = torch, driver
         self.warmup, self.iterations = warmup, iterations
         self.bridge = Bridge()

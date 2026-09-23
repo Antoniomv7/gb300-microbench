@@ -39,6 +39,16 @@ def repository_state(sources=()):
                               for source in sources}}
 
 
+def tracked_changes(repository):
+    """Return the status lines of modified tracked files; untracked files do not change sources."""
+    return [line for line in repository.get("status", []) if not line.startswith("??")]
+
+
+def ncu_version():
+    output = command_output([os.environ.get("NCU_BINARY", "ncu"), "--version"])
+    return next((line.strip() for line in output.splitlines() if "Version" in line), output.strip())
+
+
 def pinned_versions():
     pairs = (line.split("=", 1) for line in (ROOT / "VERSIONS.env").read_text().splitlines()
              if "=" in line and not line.startswith("#"))

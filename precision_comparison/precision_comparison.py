@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Compare matched BF16, FP8 and block-scaled NVFP4 CuTe DSL GEMMs."""
+"""Experiment V: matched BF16, FP8 and NVFP4 CuTe DSL GEMMs with a within-format cuBLASLt baseline.
+
+One acquisition writes the nine-row CuTe DSL precision summary and the 18-row CuTe DSL/cuBLASLt
+comparison, both from the same three repetitions of every format and shape.
+"""
 
 import argparse
 import contextlib
@@ -25,6 +29,8 @@ COLORS = {"bf16": "#2563eb", "fp8": "#7c3aed", "nvfp4": "#d97706"}
 LABELS = {"bf16": "BF16", "fp8": "FP8 E4M3", "nvfp4": "NVFP4 E2M1"}
 VENDOR_DENSE_TFLOPS = {"bf16": 2250.0, "fp8": 4500.0, "nvfp4": 13500.0}
 REPETITIONS = 3
+WARMUP_ITERATIONS = 5
+ITERATIONS = 20
 TILE = (256, 128)
 CLUSTER = (2, 1)
 IMPLEMENTATIONS = ("cutedsl", "cublaslt")
@@ -53,16 +59,6 @@ SOURCES = ("precision_comparison/precision_comparison.py",
            "precision_comparison/cublaslt_precision.py",
            "precision_comparison/cublaslt_precision_bridge.cu", "analysis/analyze.py",
            "scripts/provenance.py")
-
-
-def parse_shape(value):
-    try:
-        dimensions = tuple(int(part.strip()) for part in value.split(","))
-    except ValueError as error:
-        raise argparse.ArgumentTypeError("shape must contain three integers") from error
-    if len(dimensions) != 3 or any(dimension <= 0 or dimension % 32 for dimension in dimensions):
-        raise argparse.ArgumentTypeError("shape dimensions must be positive multiples of 32")
-    return (*dimensions, 1)
 
 
 def load_example(name, relative):
@@ -253,7 +249,7 @@ def comparison_figure(rows, warmup, iterations):
     return "\n".join([*output, "</svg>"]) + "\n"
 
 
-def run(shapes, warmup, iterations, cublaslt=None):
+def run(shapes, warmup, iterations, cublaslt):
     import cutlass
     import torch
 
@@ -270,18 +266,16 @@ def run(shapes, warmup, iterations, cublaslt=None):
                 print(f"precision: {'x'.join(map(str, shape))}/{precision} "
                       f"repetition {repetition + 1}/{REPETITIONS}",
                       file=sys.stderr, flush=True)
-                # The optional hooks only record the operands run() creates.
-                with (cublaslt.capture(module, precision) if cublaslt
-                      else contextlib.nullcontext()) as captured:
+                # The hooks only record the operands run() creates.
+                with cublaslt.capture(module, precision) as captured:
                     # Validate each format and shape once before timing its repetitions.
                     samples.append(measure(module, cutlass, precision, shape,
                                            warmup, iterations, verify=repetition == 0))
                 captures.append(captured)
             rows.append(summarize(shape_index, shape, precision, samples))
-            if cublaslt is not None:
-                print(f"precision: {'x'.join(map(str, shape))}/{precision} cuBLASLt on the "
-                      "same operand sets", file=sys.stderr, flush=True)
-                cublaslt.measure(shape_index, shape, precision, cutlass, captures, samples)
+            print(f"precision: {'x'.join(map(str, shape))}/{precision} cuBLASLt on the "
+                  "same operand sets", file=sys.stderr, flush=True)
+            cublaslt.measure(shape_index, shape, precision, cutlass, captures, samples)
             del captures
 
         baseline = next(row for row in rows
@@ -360,7 +354,7 @@ def comparison_rows(cublaslt):
 
 
 def write_extended(output, shapes, rows, cublaslt, environment, created, warmup, iterations):
-    """Write the separate CuTe DSL versus cuBLASLt experiment and decide whether it is complete."""
+    """Write both summaries, the raw records and the metadata; decide whether it is complete."""
     from cublaslt_precision import (ARITHMETIC, CUTE_KERNELS, REFERENCE, REQUESTED_ALGORITHMS,
                                     TOLERANCES, WORKSPACE_LIMIT_BYTES, arithmetic)
 
@@ -371,7 +365,7 @@ def write_extended(output, shapes, rows, cublaslt, environment, created, warmup,
     write_table(raw / "operands.csv", OPERAND_FIELDS, cublaslt.operands)
     (raw / "cublaslt_plans.json").write_text(json.dumps(cublaslt.plans, indent=2) + "\n",
                                              encoding="utf-8")
-    # The CuTe DSL summary keeps the published schema, but for this separate acquisition.
+    # The CuTe DSL summary keeps the published schema of results/precision_comparison.csv.
     write_csv(output / "precision_comparison.csv", rows)
     (output / "precision_comparison.svg").write_text(figure(rows), encoding="utf-8")
     comparison = comparison_rows(cublaslt) if not cublaslt.limitations else []
@@ -389,6 +383,8 @@ def write_extended(output, shapes, rows, cublaslt, environment, created, warmup,
                         f"{2 * REPETITIONS * configurations}")
     if failures:
         problems.append(f"{len(failures)} validation records failed")
+    if len(rows) != configurations:
+        problems.append(f"{len(rows)} CuTe DSL summary rows, expected {configurations}")
     if len(comparison) != 2 * configurations:
         problems.append(f"{len(comparison)} comparison rows, expected {2 * configurations}")
     problems += [f"{row['shape_id']}/{row['precision']}: comparison not matched"
@@ -396,7 +392,8 @@ def write_extended(output, shapes, rows, cublaslt, environment, created, warmup,
                  and row["implementation"] == "cublaslt"]
     scaled = [record for record in cublaslt.operands if record["precision"] == "nvfp4"]
     metadata = {
-        "experiment": "CuTe DSL versus cuBLASLt by precision (separate from results/)",
+        "experiment": "precision_comparison: BF16, FP8 and NVFP4 CuTe DSL GEMMs with a "
+                      "within-format cuBLASLt baseline",
         "state": "COMPLETE" if not problems else "INCOMPLETE", "problems": problems,
         "created_utc": created, "completed_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "command": [sys.executable, *sys.argv], "environment": environment,
@@ -511,39 +508,17 @@ def run_extended(output, shapes, warmup, iterations):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Benchmark matched BF16, FP8 and NVFP4 persistent GEMMs.")
-    parser.add_argument("--shape", action="append", type=parse_shape,
-                        help="M,N,K; may be repeated; defaults to three thesis shapes")
-    parser.add_argument("--warmup-iterations", type=int, default=5)
-    parser.add_argument("--iterations", type=int, default=20)
-    parser.add_argument("--output", type=Path, default=Path("results"))
-    parser.add_argument("--with-cublaslt", action="store_true",
-                        help="also validate and time cuBLASLt on the same operands; writes a "
-                             "separate experiment to a new --output directory")
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--output", type=Path, required=True,
+                        help="new run directory; an existing directory is never reused")
     args = parser.parse_args()
-    if args.warmup_iterations < 0 or args.iterations <= 0:
-        parser.error("warm-up must be non-negative and iterations must be positive")
-    shapes = tuple(args.shape or SHAPES)
-    if len(set(shapes)) != len(shapes):
-        parser.error("shapes must be distinct")
-
     output = args.output if args.output.is_absolute() else ROOT / args.output
-    if args.with_cublaslt:
-        # A fresh directory: the separate experiment never replaces the published results.
-        output.mkdir(parents=True, exist_ok=False)
-        with logged(output / "run.log"):
-            state = run_extended(output, shapes, args.warmup_iterations, args.iterations)
-            print(f"precision: {state} {output}", file=sys.stderr)
-        if state != "COMPLETE":
-            raise SystemExit(2)
-        return
-
-    rows = run(shapes, args.warmup_iterations, args.iterations)
-    output.mkdir(parents=True, exist_ok=True)
-    write_csv(output / "precision_comparison.csv", rows)
-    (output / "precision_comparison.svg").write_text(figure(rows), encoding="utf-8")
-    print(f"precision: COMPLETE {output}", file=sys.stderr)
+    output.mkdir(parents=True, exist_ok=False)
+    with logged(output / "run.log"):
+        state = run_extended(output, SHAPES, WARMUP_ITERATIONS, ITERATIONS)
+        print(f"precision: {state} {output}", file=sys.stderr)
+    if state != "COMPLETE":
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Capture DRAM counters and the SM clock with Nsight Compute."""
 
-import argparse
 import csv
 import io
 import json
@@ -121,8 +120,3 @@ def capture(campaign):
     (directory / "index.json").write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
     return index
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Capture the essential NCU counters.")
-    parser.add_argument("--campaign-dir", required=True, type=Path)
-    capture(parser.parse_args().campaign_dir)

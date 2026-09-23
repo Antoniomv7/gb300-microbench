@@ -13,11 +13,19 @@ from collections import defaultdict
 from pathlib import Path
 
 import gpu_telemetry
+import provenance
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASETS = ("memory_paths", "umma_throughput", "umma_device_scaling", "gemm_comparison")
 TELEMETRY_INTERVAL_MS = 50
 MINIMUM_SAMPLES_PER_CONFIGURATION = 3
+GEMM_PROTOCOL = {"pilot": {"warmup": 1, "iterations": 1}, "final": {"warmup": 2, "iterations": 10}}
+SOURCES = ("benchmark_common.cuh", "memory_paths/memory_common.cuh", "memory_paths/ldgsts.cu",
+           "memory_paths/tma.cu", "umma_throughput/umma_common.cuh", "umma_throughput/umma_1sm.cu",
+           "umma_throughput/umma_2sm.cu", "umma_throughput/umma_device_scaling.cu",
+           "gemm_comparison/gemm_comparison.py", "gemm_comparison/cublaslt_bridge.cu",
+           "scripts/run_campaign.py", "scripts/gpu_telemetry.py", "scripts/ncu_capture.py",
+           "scripts/provenance.py", "scripts/run_gpu.sh")
 
 
 def run(command):
@@ -40,15 +48,6 @@ def write_rows(path, rows, expected):
 def selected_gpu():
     # run_gpu.sh exposes one physical GPU to the container and names it here.
     return os.environ.get("BLACKWELL_GPU_UUID", "0")
-
-
-def gpu_info():
-    gpu = selected_gpu()
-    completed = subprocess.run(
-        ["nvidia-smi", "-i", gpu, "--query-gpu=uuid,name,driver_version",
-         "--format=csv,noheader"], text=True, capture_output=True, check=True)
-    return dict(zip(("uuid", "name", "driver_version"),
-                    (value.strip() for value in next(csv.reader(completed.stdout.splitlines())))))
 
 
 def memory_rows(kind):
@@ -122,47 +121,45 @@ def main():
     parser.add_argument("--campaign-id")
     parser.add_argument("--output-root", type=Path, default=Path("runs"))
     parser.add_argument("--with-ncu", action="store_true")
-    parser.add_argument("--experiments", default=",".join(DATASETS),
-                        help="comma-separated subset of " + ",".join(DATASETS))
     args = parser.parse_args()
-    experiments = tuple(name.strip() for name in args.experiments.split(",") if name.strip())
-    if any(name not in DATASETS for name in experiments) or not experiments:
-        parser.error("--experiments must name a subset of " + ",".join(DATASETS))
 
     now = dt.datetime.now(dt.timezone.utc)
     campaign_id = args.campaign_id or now.strftime("%Y%m%dT%H%M%SZ")
     directory = (args.output_root if args.output_root.is_absolute() else ROOT / args.output_root) / campaign_id
     raw = directory / "raw"
     raw.mkdir(parents=True, exist_ok=False)
+    # Identify the GPU and the exact sources before any measurement.
+    environment = {"gpu": provenance.gpu_identity(), "software": provenance.software_versions(),
+                   "repository": provenance.repository_state(SOURCES),
+                   "pinned": provenance.pinned_versions()}
 
-    counts, telemetry = {}, {"state": "NOT_REQUESTED"}
-    if "memory_paths" in experiments:
-        memory, memory_count = memory_rows(args.kind)
-        counts["memory_paths"] = write_rows(raw / "memory_paths.csv", memory, memory_count)
-    if "umma_throughput" in experiments:
-        umma, umma_count = umma_rows(args.kind)
-        counts["umma_throughput"] = write_rows(raw / "umma_throughput.csv", umma, umma_count)
-    if "umma_device_scaling" in experiments:
-        scaling, scaling_count, telemetry = umma_scaling_rows(
-            args.kind, raw / "umma_device_scaling_telemetry.csv")
-        telemetry["state"] = "COMPLETE"
-        counts["umma_device_scaling"] = write_rows(raw / "umma_device_scaling.csv",
-                                                   scaling, scaling_count)
-    if "gemm_comparison" in experiments:
-        gemm_warmup, gemm_iterations = (1, 1) if args.kind == "pilot" else (2, 10)
-        gemm = run([sys.executable, "gemm_comparison/gemm_comparison.py",
-                    "--warmup-iterations", str(gemm_warmup),
-                    "--iterations", str(gemm_iterations)])
-        counts["gemm_comparison"] = write_rows(raw / "gemm_comparison.csv", gemm, 20)
+    counts = {}
+    memory, memory_count = memory_rows(args.kind)
+    counts["memory_paths"] = write_rows(raw / "memory_paths.csv", memory, memory_count)
+    umma, umma_count = umma_rows(args.kind)
+    counts["umma_throughput"] = write_rows(raw / "umma_throughput.csv", umma, umma_count)
+    scaling, scaling_count, telemetry = umma_scaling_rows(
+        args.kind, raw / "umma_device_scaling_telemetry.csv")
+    telemetry["state"] = "COMPLETE"
+    counts["umma_device_scaling"] = write_rows(raw / "umma_device_scaling.csv",
+                                               scaling, scaling_count)
+    gemm_protocol = GEMM_PROTOCOL[args.kind]
+    gemm = run([sys.executable, "gemm_comparison/gemm_comparison.py",
+                "--warmup-iterations", str(gemm_protocol["warmup"]),
+                "--iterations", str(gemm_protocol["iterations"])])
+    counts["gemm_comparison"] = write_rows(raw / "gemm_comparison.csv", gemm, 20)
 
     profile = {"state": "NOT_REQUESTED", "captured_count": 0}
     if args.with_ncu:
         # Profile after timing so NCU replay cannot affect measured throughput.
         import ncu_capture
         profile = ncu_capture.capture(directory)
+        environment["ncu"] = provenance.ncu_version()
 
     metadata = {"campaign_id": campaign_id, "kind": args.kind, "created_utc": now.isoformat(),
-                "gpu": gpu_info(), "experiments": list(experiments), "row_counts": counts,
+                "completed_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "gpu": environment["gpu"], "environment": environment,
+                "experiments": list(DATASETS), "row_counts": counts, "gemm_protocol": gemm_protocol,
                 "telemetry": telemetry,
                 "ncu": {key: profile[key] for key in ("state", "captured_count")}}
     (directory / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")

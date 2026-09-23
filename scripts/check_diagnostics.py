@@ -7,6 +7,7 @@ and rows, re-read the exported Nsight Compute CSVs, and require every validation
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import sys
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import profile_gemm  # noqa: E402  (scripts/ is this script's directory)
+import provenance  # noqa: E402
 from precision_comparison import precision_comparison as precision  # noqa: E402
 
 IMPLEMENTATIONS = ("cutedsl", "cublaslt")
@@ -42,6 +44,39 @@ def positive(value):
     return math.isfinite(number) and number > 0
 
 
+def check_provenance(environment):
+    """A recorded GPU and commit, with no tracked source modified at acquisition time."""
+    repository = environment.get("repository", {})
+    problems = [] if repository.get("commit") and environment.get("gpu", {}).get("uuid") else \
+        ["the GPU or the source commit was not recorded"]
+    if provenance.tracked_changes(repository):
+        problems.append("acquired with modified tracked files "
+                        f"{provenance.tracked_changes(repository)}")
+    return problems
+
+
+def check_gemm_summary(index, captures):
+    """The CUDA-event reference must be the manifest-backed analysis the profile recorded."""
+    summary = index.get("gemm_summary", {})
+    if not all(summary.get(key) for key in ("path", "sha256", "source_commit", "gpu_uuid",
+                                            "campaigns")):
+        return ["the CUDA-event reference (GEMM_SUMMARY) is not recorded"]
+    problems = []
+    path = profile_gemm.resolve(Path(summary["path"]))
+    if not path.exists():
+        problems.append(f"the CUDA-event reference {path} is missing")
+    elif hashlib.sha256(path.read_bytes()).hexdigest() != summary["sha256"]:
+        problems.append(f"the CUDA-event reference {path} changed after profiling")
+    if summary["gpu_uuid"] != index.get("environment", {}).get("gpu", {}).get("uuid"):
+        problems.append("the CUDA-event reference was measured on a different GPU")
+    for capture in captures:
+        reference = capture.get("cuda_event_reference") or {}
+        if not (positive(reference.get("mean_tflops")) and
+                positive(reference.get("mean_kernel_time_us"))):
+            problems.append(f"{capture.get('case', '?')}: no CUDA-event reference values")
+    return problems
+
+
 def check_gemm_profile(directory):
     """Six passing captures, each with its files, one kernel in the NVTX range and its metrics."""
     index_path = directory / "index.json"
@@ -49,6 +84,13 @@ def check_gemm_profile(directory):
         return [f"{index_path} is missing"]
     index = json.loads(index_path.read_text(encoding="utf-8"))
     problems = [] if index.get("state") == "COMPLETE" else [f"state is {index.get('state')}"]
+    problems += check_provenance(index.get("environment", {}))
+    cache_state = index.get("cache_state")
+    settings = {flag.lstrip("-"): value
+                for flag, value in profile_gemm.NCU_SETTINGS.get(cache_state, ())}
+    if not settings or index.get("protocol", {}).get("ncu_settings") != settings:
+        problems.append(f"cache state {cache_state!r} and its Nsight Compute settings are not "
+                        "recorded as defined")
     captures = index.get("captures", [])
     expected = {(profile_gemm.shape_id(shape), variant)
                 for shape in profile_gemm.SHAPES for variant in profile_gemm.VARIANTS}
@@ -68,6 +110,7 @@ def check_gemm_profile(directory):
             profile_gemm.L2_CALIBRATION_TOLERANCE:
         problems.append("the L2 read metric calibration is outside its tolerance")
 
+    problems += check_gemm_summary(index, captures)
     for capture in captures:
         name = capture.get("case", "?")
         for kind, file in capture.get("files", {}).items():
@@ -103,6 +146,8 @@ def check_gemm_profile(directory):
     if len(rows) != len(expected) or any(row["status"] != "PASS" or row["validation"] != "PASS"
                                          or not row["kernel_name"] for row in rows):
         problems.append(f"{summary.name} does not hold {len(expected)} passing rows")
+    if any(row.get("cache_state") != cache_state for row in rows):
+        problems.append(f"{summary.name} mixes cache states or lacks them")
     return problems
 
 
@@ -113,7 +158,12 @@ def check_precision(directory):
         return [f"{metadata_path} is missing"]
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     problems = [] if metadata.get("state") == "COMPLETE" else [f"state is {metadata.get('state')}"]
+    problems += check_provenance(metadata.get("environment", {}))
     protocol = metadata.get("protocol", {})
+    fixed = {"repetitions": REPETITIONS, "warmup_iterations": precision.WARMUP_ITERATIONS,
+             "iterations": precision.ITERATIONS}
+    if any(protocol.get(key) != value for key, value in fixed.items()):
+        problems.append(f"the protocol is not {fixed}")
     configurations = {("x".join(map(str, shape)), name)
                       for shape in precision.SHAPES for name in precision.FORMATS}
     declared = {(shape, name) for shape in protocol.get("shapes", [])
@@ -190,6 +240,12 @@ def check_precision(directory):
     if len(operands) != len(OPERAND_SETS) * len(configurations) or \
             any(row["represented_exactly"] != "True" for row in operands):
         problems.append("raw/operands.csv is incomplete or an operand was not represented exactly")
+    # cuBLASLt must consume the very bytes, and NVFP4 scale bytes, that CuTe DSL consumed.
+    identical = ("a_bytes_identical_to_cutedsl", "b_bytes_identical_to_cutedsl")
+    scales = ("a_scale_bytes_identical_to_cutedsl", "b_scale_bytes_identical_to_cutedsl")
+    if any(row[field] != "True" for row in operands
+           for field in identical + (scales if row["precision"] == "nvfp4" else ())):
+        problems.append("cuBLASLt operand bytes differ from the CuTe DSL operand bytes")
     plans = json.loads(files["raw/cublaslt_plans.json"].read_text(encoding="utf-8"))
     if len(plans) != len(configurations) or not all(
             plan.get("same_algorithm_for_every_set") and plan.get("identification_algorithm_matches")
@@ -211,16 +267,13 @@ def check_precision(directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--gemm-profile", type=Path, default=Path("runs/gemm-profile-final"))
-    parser.add_argument("--precision", type=Path, default=Path("runs/precision-extended-final"))
-    parser.add_argument("--only", choices=("gemm-profile", "precision"))
+    parser.add_argument("--gemm-profile", type=Path, required=True)
+    parser.add_argument("--precision", type=Path, required=True)
     args = parser.parse_args()
     checks = {"gemm-profile": (check_gemm_profile, args.gemm_profile),
               "precision": (check_precision, args.precision)}
     failed = False
     for name, (check, directory) in checks.items():
-        if args.only and name != args.only:
-            continue
         directory = directory if directory.is_absolute() else ROOT / directory
         problems = check(directory)
         failed |= bool(problems)
