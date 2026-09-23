@@ -333,7 +333,8 @@ def comparison_rows(cublaslt):
                           f"cluster {CLUSTER[0]}x{CLUSTER[1]}; TMA store")
             else:
                 algorithm = plan["algorithm"]
-                kernel = (f"{' + '.join(plan.get('kernel_names', []))} (algorithm "
+                name = " + ".join(plan.get("kernel_names", [])) or "name unavailable in profiler"
+                kernel = (f"{name} (algorithm "
                           f"{algorithm['algorithm_id']}; tile {algorithm['tile_id']}; stages "
                           f"{algorithm['stages_id']}; cluster {algorithm['cluster_shape_id']})")
             rows.append({
@@ -433,10 +434,17 @@ def write_extended(output, shapes, rows, cublaslt, environment, created, warmup,
             "fp32_output_check": "cublasLtMatmulAlgoCheck on every selected algorithm with "
                                  "CUDA_R_32F C and D",
             "fast_accumulation": 0, "pointer_mode": "host",
+            "kernel_identification": "one CPU + CUDA torch.profiler capture after timing; "
+                                     "UNAVAILABLE means the trace contained no kernel "
+                                     "event, not that no kernel executed",
+            "kernel_names_unavailable": [f"{entry['shape_id']}/{entry['precision']}"
+                                         for entry in cublaslt.plans if
+                                         entry["kernel_identification_status"] == "UNAVAILABLE"],
             "epilogue": "CUBLASLT_EPILOGUE_DEFAULT",
             "selected": [{key: entry.get(key) for key in (
                 "shape_id", "precision", "algorithm", "same_algorithm_for_every_set",
-                "identification_algorithm_matches", "kernel_names", "kernels_per_launch")}
+                "identification_algorithm_matches", "kernel_identification_status",
+                "kernel_names", "kernels_per_launch")}
                 for entry in cublaslt.plans]},
         "arithmetic": {implementation: {precision: arithmetic(implementation, precision)
                                         for precision in FORMATS}
@@ -503,6 +511,11 @@ def run_extended(output, shapes, warmup, iterations):
     rows = run(shapes, warmup, iterations, cublaslt)
     # Kernel names come from a profiler, so they are read only after every timed launch.
     cublaslt.identify_kernels()
+    for entry in cublaslt.plans:
+        if entry["kernel_identification_status"] == "UNAVAILABLE":
+            print(f"precision: no CUDA kernel event captured for "
+                  f"{entry['shape_id']}/{entry['precision']}; selected algorithm and "
+                  "validation remain recorded", file=sys.stderr)
     return write_extended(output, shapes, rows, cublaslt, environment, created,
                           warmup, iterations)
 
