@@ -19,7 +19,12 @@ The fifth experiment, `precision_comparison`, is not part of those campaigns. It
 through `make precision`, which times its own three repetitions of every format and shape in a
 single invocation and writes its CSV and figure directly.
 
-All five CSV summaries and five SVG figures live in `results/`. All statistics are descriptive.
+Two diagnostics sit outside both: an Nsight Compute profile of the BF16 GEMM gap (`make
+gemm-profile`) and a cuBLASLt baseline for each precision (`make precision-extended`). Each writes to
+its own run directory; `make check-diagnostics` re-checks both from their saved files, and their
+summaries are copied into `results/`.
+
+All seven CSV summaries and six SVG figures live in `results/`. All statistics are descriptive.
 
 ### LDGSTS versus TMA
 
@@ -139,8 +144,39 @@ measurements in the previous section use `%clock64` and are not part of this com
 cuBLASLt is smallest on the square 4096 shape and largest on the tall-and-thin shapes, where
 cuBLASLt was 1.8–2.0× faster. cuBLASLt peaked at 2107.8 TFLOP/s on `8192x8192x8192`, 93.7% of
 the 2250 TFLOP/s dense BF16 vendor reference. Coefficients of variation stayed at or below 1.03%.
-These are hot-cache measurements without kernel-level GEMM profiling; all candidates share operands
-and pass the same untimed IEEE-FP32 reference.
+These are hot-cache measurements; all candidates share operands and pass the same untimed IEEE-FP32
+reference.
+
+#### Profiling the gap
+
+`make gemm-profile` captures one launch of `persistent_2cta` and one of the cuBLASLt baseline per
+shape with Nsight Compute, on three of the five shapes. Each capture reuses the campaign's operands,
+validation and warm-up, and admits exactly one kernel through an NVTX filter; all six captures
+validated before and after the profiled launch. Compulsory reads are the A and B operand bytes.
+
+| Shape `(M,N,K,L)` | Implementation | DRAM read / compulsory | DRAM read (GB) | L2→SM TMA reads (GB) | Profiled time (µs) | CUDA-event time (µs) |
+|---|---|---:|---:|---:|---:|---:|
+| `4096x4096x4096x1` | CuTe DSL | 1.08× | 0.073 | 1.61 | 83.2 | 81.8 |
+| | cuBLASLt | 1.28× | 0.086 | 1.07 | 81.7 | 78.3 |
+| `8192x8192x8192x1` | CuTe DSL | 12.29× | 3.300 | 12.88 | 751.2 | 758.9 |
+| | cuBLASLt | 4.34× | 1.165 | 8.59 | 511.5 | 521.6 |
+| `32768x512x4096x1` | CuTe DSL | 3.96× | 1.081 | 1.61 | 182.1 | 181.7 |
+| | cuBLASLt | 1.03× | 0.280 | 1.34 | 93.2 | 91.2 |
+
+DRAM traffic follows the throughput gap. On `4096x4096x4096`, where CuTe DSL reaches 95.7% of
+cuBLASLt, both read the operands close to once. On the two shapes where the gap is large, CuTe DSL
+reads 2.83× and 3.86× as many DRAM bytes as cuBLASLt: 12.3 times the operand volume on
+`8192x8192x8192`, and 3.96 times on `32768x512x4096`, where cuBLASLt reads it essentially once. CuTe
+DSL also moves 1.2–1.5× more bytes from L2 to the SMs through TMA on every shape. This is
+consistent with operand reuse across tiles, not MMA issue rate, limiting `persistent_2cta` on these
+shapes, but the capture does not isolate the scheduling cause.
+
+The profiler flushes caches before each capture (`--cache-control all`), so the DRAM columns
+describe a cold-L2 launch, whereas the CUDA-event times come from the hot-cache campaigns. Clocks were
+not locked; the profiled SM clock ran at 1818–1898 MHz. The profiled durations sit within 4.5% of the
+campaign times and are diagnostics, not performance results. Before the GEMM captures, a TMA
+calibration on the `memory_paths` kernel confirmed that the L2→SM counter reports exactly the useful
+bytes (ratio 1.000). Per-capture data are in `results/gemm_profile.csv`.
 
 ### BF16 versus FP8 versus NVFP4
 
@@ -184,6 +220,44 @@ published sparse BF16 and FP8 values convert to dense single-GPU peaks as `36 / 
 PFLOP/s` and `72 / 2 / 8 = 4.50 PFLOP/s`; the explicitly published dense NVFP4 value gives
 `108 / 8 = 13.50 PFLOP/s`. These are comparison references, not measured hardware ceilings.
 
+#### CuTe DSL versus cuBLASLt by precision
+
+![CuTe DSL and cuBLASLt throughput by precision](results/precision_cutedsl_vs_cublaslt.svg)
+
+`make precision-extended` reruns the three CuTe DSL repetitions and times cuBLASLt on the same
+logical operands in each format. cuBLASLt receives byte-identical BF16, FP8 and packed FP4 data and,
+for NVFP4, byte-identical `UE4M3` scales in its documented 16-element block-scaling layout. It uses
+FP32 compute, FP32 C/D, `alpha = 1` and `beta = 0`. The plan is the first supported result of
+`cublasLtMatmulAlgoGetHeuristic` under a 64 MiB workspace, without a timed search, and both
+implementations are timed by the same `cute.testing.benchmark` call with a hot L2.
+
+| Shape `(M,N,K,L)` | Format | CuTe DSL TFLOP/s | cuBLASLt TFLOP/s | CuTe DSL / cuBLASLt | cuBLASLt vs. vendor reference |
+|---|---|---:|---:|---:|---:|
+| `4096x4096x4096x1` | BF16 | 1682.4 | 1767.2 | 95.20% | 78.54% |
+| | FP8 | 2934.7 | 3193.0 | 91.91% | 70.96% |
+| | NVFP4 | 4029.0 | 4781.7 | 84.26% | 35.42% |
+| `8192x8192x8192x1` | BF16 | 1459.6 | 2100.8 | 69.48% | 93.37% |
+| | FP8 | 3127.9 | 3943.2 | 79.32% | 87.63% |
+| | NVFP4 | 5568.2 | 7552.6 | 73.73% | 55.95% |
+| `32768x512x4096x1` | BF16 | 756.6 | 1516.3 | 49.90% | 67.39% |
+| | FP8 | 1717.4 | 2669.9 | 64.33% | 59.33% |
+| | NVFP4 | 2994.9 | 4100.9 | 73.03% | 30.38% |
+
+cuBLASLt was faster in all nine configurations. The BF16 ratios reproduce the campaigns' gap to
+within 0.8 percentage points, and the BF16 cuBLASLt rows agree with the campaigns' cuBLASLt results
+to within 0.7%. Lower precision narrows the gap on the two shapes where it is large, from 69.5%
+to 79.3% and 73.7% on `8192x8192x8192` and from 49.9% to 64.3% and 73.0% on `32768x512x4096`,
+but widens it on `4096x4096x4096`, from 95.2% to 84.3% for NVFP4. cuBLASLt peaked at 7552.6
+TFLOP/s (7.553 PFLOP/s) with NVFP4 on `8192x8192x8192`, 1.36× the CuTe DSL NVFP4 peak.
+
+All 99 validation records passed against an IEEE-FP32 reference formed from the exactly represented
+operands, and the cuBLASLt outputs were bit-identical to the CuTe DSL outputs for all 36 operand
+sets. The CuTe DSL throughput in this run agrees with the `make precision` table above to within
+0.39%, and coefficients of variation range from 0.002% to 0.864%. The selected cuBLASLt kernels are
+`nvjet_sm103` kernels in eight configurations and a CUTLASS block-scaled kernel for NVFP4 on
+`8192x8192x8192`; all use two-CTA instructions. Per-configuration kernels and repetitions are in
+`results/precision_cutedsl_vs_cublaslt.csv`.
+
 ## Build and run
 
 The pinned CUDA image, CUTLASS commit and Python package versions are in `VERSIONS.env`.
@@ -220,6 +294,20 @@ figure itself:
 make precision
 ```
 
+Run the two diagnostics and check them from their saved files. They write to
+`runs/gemm-profile-final` and `runs/precision-extended-final` (override with `PROFILE_ID` and
+`PRECISION_ID`); `results/gemm_profile.csv` and `results/precision_cutedsl_vs_cublaslt.{csv,svg}`
+are copies of their summaries:
+
+```bash
+make gemm-profile
+make precision-extended
+make check-diagnostics
+```
+
+`make test` runs the focused checks of the diagnostic tooling inside the pinned image; it needs no
+GPU.
+
 `make smoke` is an optional short pilot of the four main experiments; it is not one of the three
 final campaigns and its output is not used by `make analyze`. `make sass` optionally generates the
 five CUDA disassemblies in `build/sass/`.
@@ -238,6 +326,9 @@ five CUDA disassemblies in `build/sass/`.
   untimed IEEE-FP32 reference.
 - Precision formats share shape, layouts, accumulation/output types, tile, cluster, and store path;
   scaled NVFP4 operands are format-specific.
+- The GEMM profile is one cold-L2 launch per implementation and shape; its durations and byte
+  counts are diagnostics, and the CUDA-event campaign results remain the performance data.
+- The per-precision cuBLASLt baseline uses the first heuristic plan, not a timed algorithm search.
 - Three campaigns, and three repetitions for the precision comparison, support descriptive
   statistics, not significance testing or architectural peak claims.
 - Independent TMEM/DSMEM latency, dual-die topology, and per-launch DVFS measurements are outside

@@ -143,7 +143,8 @@ def prepare_cutedsl(specification, modules, shape, operands, cute, cutlass, stre
     return lambda: compiled(*tensors, stream)
 
 
-def measure_candidate(specification, modules, shape, operands, reference, context, warmup, count):
+def prepare_candidate(specification, modules, shape, operands, reference, context, warmup):
+    """Build one candidate, validate its first result and complete its warm-up."""
     torch, cutlass, cute, torch_stream, cute_stream = context
     label = f"{'x'.join(map(str, shape))}/{specification['variant']}"
     print(f"gemm: {label}", file=sys.stderr, flush=True)
@@ -167,6 +168,18 @@ def measure_candidate(specification, modules, shape, operands, reference, contex
         for _ in range(warmup):
             launch()
         torch.cuda.synchronize()
+    except BaseException:
+        if bridge is not None:
+            bridge.close()
+        raise
+    return label, launch, bridge
+
+
+def measure_candidate(specification, modules, shape, operands, reference, context, warmup, count):
+    torch, _, _, torch_stream, _ = context
+    label, launch, bridge = prepare_candidate(specification, modules, shape, operands,
+                                              reference, context, warmup)
+    try:
         start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
         start.record(torch_stream)
         for _ in range(count):
