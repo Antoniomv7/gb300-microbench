@@ -1,192 +1,240 @@
 # NVIDIA B300 GEMM Microbenchmarks
 
-Five experiments on one NVIDIA B300 SXM6 AC: memory transfers, Tensor Core throughput, device
-scaling, GEMM implementations and numerical formats. CUDA/PTX microbenchmarks characterize the
-hardware mechanisms; pinned CUTLASS CuTe DSL examples and cuBLASLt provide the GEMM comparisons.
+Five experiments on one NVIDIA B300 follow GEMM operands from memory to the Tensor Cores and on
+to complete GEMMs. They measure how LDGSTS and TMA move data into shared memory (I), how fast
+one-SM and two-SM UMMA instructions run (II), how UMMA throughput scales to the whole device
+(III), how CuTe DSL BF16 GEMMs compare with cuBLASLt (IV), and how BF16, FP8 and NVFP4 inputs
+change GEMM throughput (V). A Nsight Compute profile of DRAM and L2 traffic accompanies
+Experiment IV.
+
+Experiments I–III are hand-written CUDA/PTX (`cp.async`, `cp.async.bulk.tensor`, `tcgen05.mma`
+with Tensor Memory). Experiments IV and V run pinned CUTLASS CuTe DSL example kernels and
+cuBLASLt. `results/` holds the published summaries and figures of this thesis study.
+
+## Platform
+
+| | |
+|---|---|
+| GPU | NVIDIA B300 SXM6 AC (GB110), compute capability 10.3 (`sm_103a`), 148 SMs, 126.5 MiB L2, ECC enabled |
+| Driver and clocks | 610.43.02; 1,100 W power limit; 2,032 MHz maximum SM clock; clocks not locked |
+| Container | `nvidia/cuda:13.1.0-devel-ubuntu24.04`, pinned by digest in `VERSIONS.env` |
+| GEMM software | CUTLASS `e05f953` (CuTe DSL 4.6.1), cuBLASLt 13.2.0, PyTorch 2.10.0+cu130 |
+| Profiler | Nsight Compute 2025.4.0 |
 
 ## Experiments
 
-| # | Purpose | Command | Main CSV in the run directory |
+| # | Question | Source | Command |
 |---|---|---|---|
-| I | LDGSTS versus TMA effective transfer rate | `make exp1-memory` | `raw/memory_paths.csv` |
-| II | Isolated 1-SM versus 2-SM BF16 UMMA throughput | `make exp2-umma` | `raw/umma_throughput.csv` |
-| III | Whole-device BF16 UMMA scaling | `make exp3-scaling` | `raw/umma_device_scaling.csv` |
-| IV | BF16 CuTe DSL variants versus cuBLASLt | `make exp4-gemm` | `raw/gemm_comparison.csv` |
-| V | BF16, FP8 and NVFP4 with CuTe DSL and cuBLASLt | `make precision` | `precision_comparison.csv`, `precision_cutedsl_vs_cublaslt.csv` |
+| I | Effective global-to-shared transfer rate of LDGSTS versus TMA | `memory_paths/` | `make exp1-memory` |
+| II | Isolated BF16 UMMA throughput: one SM versus a two-SM pair | `umma_throughput/umma_1sm.cu`, `umma_2sm.cu` | `make exp2-umma` |
+| III | BF16 UMMA throughput from one work unit to all 148 SMs | `umma_throughput/umma_device_scaling.cu` | `make exp3-scaling` |
+| IV | BF16 GEMM: three CuTe DSL kernels versus cuBLASLt | `gemm_comparison/` | `make exp4-gemm` |
+| V | BF16, FP8 and NVFP4 GEMM: CuTe DSL versus cuBLASLt on identical operands | `precision_comparison/` | `make precision` |
+| – | DRAM and L2 traffic of single BF16 GEMM launches (diagnostic) | `scripts/profile_gemm.py` | `make gemm-profile` |
 
-Experiments I and II also collect six DRAM and two SM-clock Nsight Compute captures, respectively.
-Experiment III samples the SM clock, power and temperature every 50 ms during timing. Experiment V
-records operands, validation, repetitions and selected cuBLASLt algorithms in `raw/`. A separate
-GEMM profile collects DRAM and L2 traffic for two BF16 implementations on three shapes.
+`scripts/run_campaign.py` holds the parameters of Experiments I–IV and runs them.
+`analysis/analyze.py` computes every published number from the raw measurements, and
+`analysis/figures.py` draws the figures.
 
-## Run the complete study
+### I. Global-to-shared memory paths
 
-The host needs an NVIDIA driver, Docker with GPU support, Git, Make and Python 3. The CUDA image
-digest, CUTLASS commit and Python package versions are pinned in `VERSIONS.env`.
+`memory_paths/ldgsts.cu` copies 16-byte vectors per thread with `cp.async.cg.shared.global`;
+`memory_paths/tma.cu` has one elected thread issue 2-D `cp.async.bulk.tensor` loads that complete
+on an mbarrier transaction count. Both share the host code, data pattern and validation kernel in
+`memory_paths/memory_common.cuh`.
 
-Build the container once, or after changing the pinned environment:
+- One 128-thread CTA on each of the 148 SMs; reserving more than half of the shared memory
+  enforces one CTA per SM.
+- Grid: 2, 4 or 8 pipeline stages × 16, 32 or 64 KiB in flight per SM.
+- A 512 MiB working set, more than twice the L2 size (enforced), is streamed 32 times per launch.
+- Metric: effective rate = useful bytes (working set × passes) / kernel time, in GB/s.
+- Nsight Compute records DRAM read and write bytes for six configurations.
+
+### II. Isolated UMMA throughput
+
+`umma_1sm.cu` issues `tcgen05.mma.cta_group::1.kind::f16` (M = 128) on one SM; `umma_2sm.cu`
+issues the `cta_group::2` form (M = 256) from a two-CTA cluster spanning two SMs. Both accumulate
+in Tensor Memory (`tcgen05.alloc`, read back with `tcgen05.ld`); shared code is in
+`umma_throughput/umma_common.cuh`.
+
+- Grid: N = 64, 128 or 256 (K = 16) × pipeline depth 4, 16, 64 or 256, the number of dependent
+  UMMAs issued between two `tcgen05.commit` mbarrier waits.
+- `%clock64` times the elected thread's issue-and-completion loop of 1,000 iterations.
+- Metric: FLOP/cycle = 2·M·N·K·UMMAs / cycles, divided by two for the two-SM pair.
+- Nsight Compute measures the SM clock of both N = 256, depth-256 kernels; with that clock the
+  analysis converts the best per-SM result into a modeled TFLOP/s per SM.
+
+### III. Whole-device UMMA scaling
+
+`umma_device_scaling.cu` runs the N = 256, depth-256 UMMA loop as an isolated work unit (one CTA,
+or one two-CTA cluster) and at device scale (148 one-SM CTAs, or 74 two-CTA clusters).
+
+- Before timing, a residency handshake proves that every planned CTA is resident at the same time
+  on a distinct SM, one per SM; otherwise the run fails.
+- CUDA events time each launch of 1,000 iterations.
+- `scripts/gpu_telemetry.py` samples SM clock, power and temperature with `nvidia-smi` every
+  50 ms. Samples are attributed to a configuration by host timestamps; each configuration
+  needs at least three samples inside its timed launches.
+- Metrics: total TFLOP/s; scaling efficiency = device / (work units × isolated); the
+  clock-normalized efficiency also divides by the ratio of the mean sampled SM clocks.
+
+### IV. BF16 GEMM implementations
+
+`gemm_comparison/gemm_comparison.py` loads the pinned CuTe DSL examples `dense_gemm.py`
+(non-persistent, one CTA, tile 128×128) and `dense_gemm_persistent.py` (persistent, one CTA,
+128×128; persistent, two CTAs, 256×128 with a 2×1 cluster). `gemm_comparison/cublaslt_bridge.cu`
+provides cuBLASLt with the first supported of up to 32 heuristic algorithms (best-fit search,
+64 MiB workspace).
+
+- A (M×K) and B (N×K) are BF16 and K-major; accumulation and output are FP32.
+- Shapes: 4096³, 8192³, 16384×512×4096, 32768×512×4096 and 512×16384×4096.
+- All candidates share the operands of a shape and one IEEE-FP32 reference.
+- Two warm-up launches, then CUDA events time ten launches; TFLOP/s = 2·M·N·K / time.
+
+### V. BF16, FP8 and NVFP4
+
+`precision_comparison/precision_comparison.py` runs the pinned CuTe DSL examples
+`dense_gemm_persistent.py` (BF16, FP8 E4M3) and `sm103_dense_blockscaled_gemm_persistent.py`
+(NVFP4: E2M1 values with one E4M3 scale per 16 elements). Every kernel uses a 256×128 tile, a 2×1
+cluster, a TMA store, FP32 accumulation and FP32 output.
+
+- Shapes: 4096³, 8192³ and 32768×512×4096.
+- Per shape and format: three repetitions of 5 warm-up and 20 timed launches, timed by
+  `cute.testing.benchmark` with CUDA events and hot caches.
+- `cublaslt_precision.py` records the operands that each CuTe DSL repetition creates and encodes
+  the same values for cuBLASLt (`cublaslt_precision_bridge.cu`), NVFP4 block scales included in
+  cuBLASLt's documented `VEC16_UE4M3` layout. Every operand and scale buffer must be byte-identical
+  to the one the CuTe DSL kernel consumed. cuBLASLt uses the first supported heuristic algorithm,
+  which must pass `cublasLtMatmulAlgoCheck` with FP32 C and D and must be the same for every
+  operand set of a shape and format. cuBLASLt is timed with the same benchmark call.
+- After all timing, one PyTorch profiler capture per plan names the cuBLASLt kernel. An empty trace
+  is recorded as `UNAVAILABLE`; the algorithm identity and validation remain required.
+
+### GEMM traffic profile
+
+`scripts/profile_gemm.py` profiles the persistent two-CTA CuTe DSL kernel and cuBLASLt on 4096³,
+8192³ and 32768×512×4096. Each capture runs its own worker process under `ncu`. The worker repeats
+Experiment IV's operand setup, validation and two warm-up launches. It then wraps one launch in the
+NVTX range `gb300_gemm_profile`, the only range that `ncu` profiles.
+
+- Hot caches (the study): application replay with `--cache-control none`, so every pass repeats
+  setup, validation and warm-up. Cold caches (diagnostic): kernel replay with `--cache-control all`.
+  Clocks stay unlocked in both modes.
+- Counters: DRAM read and write bytes, duration and SM clock.
+- The L2-to-SM TMA read counter `l1tex__m_xbar2l1tex_read_bytes_mem_global_op_tma_ld.sum` is
+  collected only when it reproduces, within 0.1%, the useful bytes of a known TMA stream from
+  Experiment I.
+- Profiler durations are diagnostics; the CUDA-event columns repeat Experiment IV's timing.
+
+## Running the experiments
+
+The host needs an NVIDIA driver, Docker with GPU support, Git, Make and Python 3.9 or newer. Build
+the pinned container once, choose an idle B300 and run any experiment:
 
 ```bash
 make image
+export BLACKWELL_GPU_INDEX=6
+make exp1-memory     # or exp2-umma, exp3-scaling, exp4-gemm, precision
 ```
 
-Select an idle GPU and run the study:
+`scripts/run_gpu.sh` resolves the index to the GPU's UUID and refuses a GPU that already runs
+compute processes. It exposes only that GPU to the container, as device 0. Every target compiles
+as needed and writes one new directory `runs/<target>-<UTC>/`, never an existing one. A run
+keeps its samples and validation records in `raw/` and its Nsight Compute reports and CSV exports
+beside them. Its `metadata.json`, written only when the run completes, records the Git commit and
+whether tracked files were modified, the GPU and driver, the CUDA, Nsight Compute, CUTLASS and
+Python package versions, the parameters and UTC timestamps.
+
+Experiments I–IV report per-launch samples; their published summaries need three campaigns (see
+[Statistics](#statistics)). `make precision` also writes its two summaries and figures to
+`analysis/` inside its run directory.
+
+### The complete study
 
 ```bash
-export BLACKWELL_GPU_INDEX=6
 make final-study
 ```
 
-`scripts/run_gpu.sh` resolves the index to a GPU UUID, checks for existing compute processes and
-exposes that GPU as device 0 inside the container. The study requires committed sources and creates
-a new `runs/study-<UTC>/` directory. It compiles the binaries once, then:
+The target builds once and then runs six commands; the first failure stops it:
 
-1. runs Experiments I–IV three times into `campaign-1/`, `campaign-2/` and `campaign-3/`;
-2. checks and aggregates those campaigns into `analysis/`;
-3. runs Experiment V, including its three repetitions per format and shape, into `precision/`;
-4. profiles the six BF16 GEMM cases with hot caches into `gemm-profile-hot/`;
-5. checks the complete study and creates `runs/study-<UTC>.tar.gz`.
-
-The archive contains the raw data, summaries, SVG figures, metadata, Nsight Compute reports and
-per-step logs. The final message prints its path, SHA-256, GPU UUID and source commit. Execution
-stops at the first failure and preserves the run directory for diagnosis. Existing directories
-are never overwritten.
-
-## Run experiments individually
-
-After selecting the GPU, execute any command from the experiment table. For example:
-
-```bash
-make exp3-scaling
-make precision
-```
-
-Each command compiles as needed, uses the study's measurement parameters, creates its own
-timestamped directory under `runs/` and checks the saved data. Individual runs are useful for
-inspection; aggregation requires three complete I–IV campaigns.
-
-For a standalone campaign, analysis or GEMM profile:
-
-```bash
-make campaign CAMPAIGN_ID=campaign-a
-# Repeat with campaign-b and campaign-c before analysis.
-make analyze FINAL_CAMPAIGNS="campaign-a campaign-b campaign-c" ANALYSIS_OUT=runs/analysis-abc
-make gemm-profile PROFILE_CACHE=hot GEMM_SUMMARY=runs/analysis-abc/gemm_comparison.csv
-```
-
-`make help` lists the targets. `RUNS` sets the output parent; `CAMPAIGN_ID`, `PRECISION_ID` and
-`PROFILE_ID` optionally name new run directories. An extracted study can be checked with:
-
-```bash
-python3 scripts/check_diagnostics.py --study /path/to/study-YYYYMMDDTHHMMSSZ
-```
-
-## Measurement and validation
-
-- **Timing.** CUDA events measure Experiments I, III, IV and V; `%clock64` measures Experiment II.
-  Validation and warm-up precede timing. Clocks are unlocked and repeated launches reuse their
-  operands. Profiling runs after timing and its durations are reported as diagnostics.
-- **Experiments I–IV.** Every configuration validates its output before timing is retained. Complete
-  campaigns contain 540 memory, 720 isolated UMMA, 120 scaling and 20 GEMM rows. Device scaling
-  verifies simultaneous residency on every planned SM; telemetry spans the timed block and has at
-  least three samples per configuration. GEMM candidates share operands and an IEEE-FP32 reference.
-- **Experiment V.** Both implementations use the same operand bytes, including NVFP4 block scales,
-  with FP32 accumulation and output. Every timed repetition's output is checked against an
-  IEEE-FP32 product of the dequantized operands. cuBLASLt keeps one algorithm across operand sets
-  and passes `cublasLtMatmulAlgoCheck`. Each shape and format has three repetitions of five warm-up
-  and twenty timed launches. A negative control verifies the numerical tolerance check.
-- **Kernel identification.** After Experiment V's timing, one CPU/CUDA PyTorch profiler capture
-  attempts to name each cuBLASLt kernel. Empty traces are recorded as `UNAVAILABLE`, with an
-  unknown launch count; algorithm identity and numerical validation remain required.
-- **Aggregation.** Experiments I–IV use the median within each campaign, followed by the mean,
-  sample standard deviation and coefficient of variation across three distinct campaigns. The
-  campaigns must share one GPU, source commit and source-file hashes. `analysis.json` identifies
-  the inputs and hashes every output. Statistics are descriptive.
-
-## GEMM traffic profiling
-
-`make final-study` uses **hot-cache application replay**: every replay pass repeats operand setup,
-validation and two warm-up launches, then profiles one NVTX-selected launch with
-`--cache-control none`. `PROFILE_CACHE=cold` is also available for an isolated diagnostic using
-kernel replay and `--cache-control all`.
-
-Each capture validates before and after the selected launch and keeps its `.ncu-rep`, CSV export
-and worker metadata. The two implementations share operands. The L2-to-SM TMA byte counter is
-included only if a known TMA stream reproduces its useful bytes within 0.1%.
-
-The CUDA-event reference comes from the supplied analysis directory and must match its manifest
-and GPU. The cache state is recorded in every summary row. `compulsory_read_bytes` denotes the
-combined A/B operand size: hot-cache DRAM reads can be smaller, including zero. The L2/DRAM ratio
-is left empty in the CSV (`null` in JSON) when no DRAM reads were recorded.
-
-## Repository layout and results
-
-| Path | Contents |
+| Step | Output under `runs/study-<UTC>/` |
 |---|---|
-| `memory_paths/`, `umma_throughput/` | CUDA/PTX microbenchmarks and shared launch/validation code |
-| `gemm_comparison/`, `precision_comparison/` | GEMM drivers and their cuBLASLt bridges |
-| `scripts/` | Acquisition, profiling, telemetry, provenance and saved-data checks |
-| `analysis/` | Campaign aggregation and figures |
-| `results/` | Published CSV summaries and SVG figures |
-| `build/`, `runs/` | Generated binaries and evidence; excluded from Git |
+| Experiments I–IV, three independent campaigns | `campaign-1/`, `campaign-2/`, `campaign-3/` |
+| Experiment V | `precision/` |
+| Hot-cache GEMM traffic profile | `gemm-profile-hot/` |
+| `analysis/analyze.py --study` on the CPU | `analysis/`: the thirteen files that `results/` publishes |
 
-`results/` contains the summaries and six SVG figures from the complete study
-`study-20260923T173150Z` on GPU
-`GPU-619f7fdc-5f98-8c37-fe89-0465d6130baf`, acquired from commit
-`6868f001b103c4cfd4a6d2019de7f310a2a18a04`. The three campaigns supply
-the four Experiment I–IV summaries; Experiment V supplies both the CuTe DSL
-precision summary and the 18-row within-format CuTe DSL/cuBLASLt comparison.
-`gemm_profile.csv` contains six hot-cache diagnostic captures, including DRAM
-and calibrated L2-to-TMA read bytes. The complete archive, including raw runs,
-profiler reports, validation records and the analysis manifest, accompanies
-the thesis as `supplementary/study-20260923T173150Z.tar.gz` (SHA-256
-`71533e13b16c2e85a784c6f6abea3ef95cf4193af17794dd59155ad1777e4101`).
-Extract the archive before using `scripts/check_diagnostics.py --study` on
-its study directory. Later studies write to `runs/` without overwriting
-these published results.
+Use `make final-study 2>&1 | tee study.log` to keep a log. The underlying targets are
+`make campaign`, `make analyze CAMPAIGNS="dir1 dir2 dir3"` and
+`make gemm-profile PROFILE_CACHE=hot|cold GEMM_SUMMARY=.../gemm_comparison.csv`.
 
-## Published results and findings
+## Validation and controls
 
-The figures below use the published CSVs from the study above. Throughput values are means of the
-three final campaigns for Experiments I–IV and of three timed repetitions for Experiment V. The
-Nsight Compute traffic captures are separate diagnostics, not timing measurements. Results describe
-this GPU, workload and configuration grid; they are not architectural peak specifications.
+- **Correctness before timing.** Each configuration's output is validated before any timed launch
+  counts. Experiment I compares every transferred vector with its generated pattern. Experiments
+  II and III use small integer operands, whose FP32 accumulation is exact, and compare every
+  accumulator element. Experiment IV compares every candidate with the IEEE-FP32 reference
+  (|error| ≤ 0.1 + 10⁻⁵·|reference|).
+- **Every Experiment V output.** The outputs of all repetitions, CuTe DSL and cuBLASLt, before and
+  after timing, are compared with the IEEE-FP32 product of the dequantized operands. The absolute
+  tolerance is 0.1; the relative tolerance is 10⁻³ for BF16 and FP8 and 10⁻² for NVFP4. A negative
+  control first confirms that the check rejects a perturbed value. The run fails if any check,
+  operand-byte comparison or cuBLASLt algorithm condition fails.
+- **Complete data.** A campaign keeps an experiment's samples only if every configuration produced
+  its full set: 540 memory, 720 UMMA, 120 scaling and 20 GEMM rows. CUDA calls are checked
+  throughout.
+- **Warm-up.** Warm-up precedes timing: 2 s (I), 10 launches (II, III), 2 launches (IV) and 5
+  launches per repetition (V).
+- **Profiling apart from timing.** Nsight Compute runs after the timed launches, or in separate
+  processes, and never changes a timing.
+- **Isolation.** The GPU must be idle, and existing run directories are never overwritten.
+
+## Statistics
+
+For Experiments I–IV, each campaign first reduces the 30 launches of a configuration to their
+median. The three independent campaigns then give a mean, a sample standard deviation and a
+coefficient of variation (CV); the CSVs keep the three campaign values. Ratios such as TMA/LDGSTS
+or scaling efficiency are computed within each campaign and then averaged. Experiment V reports the
+mean, sample standard deviation and CV of its three repetitions. All statistics are descriptive.
+The largest CV among the Experiment I–IV summaries is 1.6%.
+
+## Published results
+
+`results/` holds the summaries and figures of study `study-20260923T173150Z`, measured on GPU
+`GPU-619f7fdc-5f98-8c37-fe89-0465d6130baf` with the code at tag `tfm-acquisition`. The figures
+show means; whiskers show the range of the three campaigns or repetitions. The results describe
+this GPU, software and configuration grid, not architectural peak specifications.
 
 ### I. HBM-to-shared-memory paths
 
 ![Effective transfer rate for LDGSTS and TMA](results/memory_paths.svg)
 
-LDGSTS has the higher effective rate in **8 of 9** matched stage/in-flight-byte configurations.
-The highest measured means are **7,024 GB/s** for LDGSTS and **6,964 GB/s** for TMA (both at four
-stages and 64 KiB in flight). At two stages and 64 KiB, TMA is marginally higher: 6,954 versus
-6,943 GB/s. Increasing the bytes in flight helps both paths in this grid, while eight stages can
-reduce throughput substantially. The plotted rate is useful bytes divided by kernel time; it is
-not a direct DRAM-bandwidth counter or a prediction of GEMM speed.
-
-Source: [`results/memory_paths.csv`](results/memory_paths.csv).
+LDGSTS reaches the higher effective rate in **8 of 9** stage and in-flight-byte configurations.
+The highest means are **7,024 GB/s** for LDGSTS and **6,964 GB/s** for TMA, both at four stages
+and 64 KiB in flight. At two stages and 64 KiB, TMA is marginally higher: 6,954 versus
+6,943 GB/s. More bytes in flight help both paths in this grid, while eight stages reduce
+throughput substantially, most for TMA. The DRAM counters read 1.00 bytes per useful byte in all
+six captured configurations. Source: [`results/memory_paths.csv`](results/memory_paths.csv).
 
 ### II–III. UMMA instruction throughput and device scaling
 
 ![Isolated BF16 UMMA throughput](results/umma_throughput.svg)
 
-At `N=256`, depth 256, the isolated 1-SM kernel reaches **8,101 FLOP/cycle/SM** (modeled
-**16.372 TFLOP/s/SM** using the measured clock); the 2-SM kernel reaches **8,028
-FLOP/cycle/SM**, or **1.982×** the total throughput of the 1-SM kernel. The per-cycle figures
-come from validated operation counts and `%clock64` cycles.
+At N = 256 and depth 256, the isolated one-SM kernel reaches **8,101 FLOP/cycle/SM**, a modeled
+**16.372 TFLOP/s/SM** at the measured clock. The two-SM kernel reaches **8,028 FLOP/cycle/SM**,
+**1.982×** the total throughput of the one-SM kernel.
 
 ![BF16 UMMA scaling to 148 SMs](results/umma_device_scaling.svg)
 
 | Execution | Active SMs | Mean throughput | Scaling efficiency | Clock-normalized efficiency |
 |---|---:|---:|---:|---:|
-| 1-SM work units | 148 | 2,103.7 TFLOP/s | 91.7% | 96.9% |
-| 2-SM work units | 148 | 2,119.7 TFLOP/s | 93.3% | 98.1% |
+| One-SM work units | 148 | 2,103.7 TFLOP/s | 91.7% | 96.9% |
+| Two-SM work units | 148 | 2,119.7 TFLOP/s | 93.3% | 98.1% |
 
-The 2-SM work-unit configuration delivers about **0.8%** more device throughput in this test.
-The gap between raw and clock-normalized efficiency shows why a fixed-clock extrapolation from
-an isolated SM overstates the scaling loss. The sampled clocks and power in the CSV describe the
-timed runs; power samples are indicative telemetry, not a calibrated energy-efficiency comparison.
-
-Sources: [`results/umma_throughput.csv`](results/umma_throughput.csv) and
+Two-SM work units deliver about **0.8%** more device throughput. The isolated units ran at the
+2,032 MHz maximum clock, the whole device at about 1,922–1,931 MHz. The gap between raw and
+clock-normalized efficiency is why a fixed-clock extrapolation from one SM overstates the scaling
+loss. Sources: [`results/umma_throughput.csv`](results/umma_throughput.csv),
 [`results/umma_device_scaling.csv`](results/umma_device_scaling.csv).
 
 ### IV. BF16 GEMM implementation and shape
@@ -201,11 +249,9 @@ Sources: [`results/umma_throughput.csv`](results/umma_throughput.csv) and
 | 32768 × 512 × 4096 | 756.9 TFLOP/s | 1,509.8 TFLOP/s | 50.1% |
 | 512 × 16384 × 4096 | 1,269.8 TFLOP/s | 1,498.9 TFLOP/s | 84.7% |
 
-Persistent 2-CTA is the fastest of the three tested CuTe DSL BF16 variants on all five shapes,
-but its proximity to cuBLASLt varies strongly with matrix shape. This comparison tests specific
-implementations and the selected cuBLASLt algorithms, not a general ceiling for CuTe DSL.
-
-Source: [`results/gemm_comparison.csv`](results/gemm_comparison.csv).
+The persistent 2-CTA kernel is the fastest of the three CuTe DSL variants on all five shapes, but
+its distance to cuBLASLt depends strongly on the shape. Source:
+[`results/gemm_comparison.csv`](results/gemm_comparison.csv).
 
 ### V. BF16, FP8 and NVFP4 GEMM
 
@@ -217,32 +263,88 @@ Source: [`results/gemm_comparison.csv`](results/gemm_comparison.csv).
 | 8192 × 8192 × 8192 | 1,459.0 | 3,122.9 (2.14×) | 5,568.8 (3.82×) |
 | 32768 × 512 × 4096 | 757.6 | 1,721.1 (2.27×) | 2,992.8 (3.95×) |
 
-Throughputs are in TFLOP/s; parentheses show speedup over BF16 for the same CuTe DSL shape.
-Lower precision increases measured throughput, but the gain depends on shape and is below the
-ratio of the nominal dense arithmetic peaks for several cases. NVFP4 uses block scales; its
-operand representation and numerical error differ from BF16 and FP8. All reported outputs pass
-validation against the FP32 reference of the corresponding dequantized operands.
+Throughputs are in TFLOP/s; parentheses give the speedup over BF16 on the same shape. Lower
+precision raises throughput, but the gain depends on the shape and in several cases stays below
+the ratio of the nominal dense peaks. NVFP4's operand representation and numerical error differ
+from BF16 and FP8.
 
 ![Matched CuTe DSL and cuBLASLt comparisons by precision](results/precision_cutedsl_vs_cublaslt.svg)
 
-In the matched-operand comparison, CuTe DSL reaches **50.0–95.3%** of cuBLASLt throughput in
-BF16, **64.4–92.2%** in FP8 and **73.2–84.2%** in NVFP4 across these three shapes. The two
-implementations consume the same operand bytes for each shape and format, including NVFP4 scales;
-every timed repetition is checked for numerical correctness.
-
-Sources: [`results/precision_comparison.csv`](results/precision_comparison.csv) and
+On identical operands, CuTe DSL reaches **50.0–95.3%** of cuBLASLt's throughput in BF16,
+**64.4–92.2%** in FP8 and **73.2–84.2%** in NVFP4. Every timed output of both implementations
+passed validation. Sources: [`results/precision_comparison.csv`](results/precision_comparison.csv),
 [`results/precision_cutedsl_vs_cublaslt.csv`](results/precision_cutedsl_vs_cublaslt.csv).
 
-### Hot-cache BF16 GEMM traffic diagnostic
+### Hot-cache BF16 GEMM traffic
 
-In the six separately profiled launches, the persistent 2-CTA CuTe DSL variant records more DRAM
-read bytes than cuBLASLt at 8192 × 8192 × 8192 (**3.35 versus 1.16 GB**) and at
-32768 × 512 × 4096 (**1.08 versus 0.28 GB**). The calibrated L2-to-SM TMA counter also records
-more bytes for CuTe DSL at those shapes. These observations are consistent with the larger
-measured performance gaps, but do not establish which operand was reread or prove that traffic
-alone caused the gap. Hot-cache DRAM reads may be smaller than the combined A/B operand size.
+In the six profiled launches, the persistent 2-CTA CuTe DSL kernel reads more DRAM bytes than
+cuBLASLt at 8192 × 8192 × 8192 (**3.35 versus 1.16 GB**) and at 32768 × 512 × 4096 (**1.08 versus
+0.28 GB**). The calibrated L2-to-SM TMA counter also records more bytes for CuTe DSL at those
+shapes. This matches the larger performance gaps but shows neither which operand was reread nor
+that traffic alone caused the gap. `compulsory_read_bytes` is the combined A and B size;
+hot-cache DRAM reads can be smaller, including zero, in which case the L2/DRAM ratio is left
+empty. Source: [`results/gemm_profile.csv`](results/gemm_profile.csv).
 
-Source: [`results/gemm_profile.csv`](results/gemm_profile.csv); capture and cache-state details
-are given in [GEMM traffic profiling](#gemm-traffic-profiling).
+## Reproducing the published summaries
+
+The complete acquisition accompanies the thesis as `supplementary/study-20260923T173150Z.tar.gz`
+(SHA-256 `71533e13b16c2e85a784c6f6abea3ef95cf4193af17794dd59155ad1777e4101`). It contains the raw
+samples, telemetry, Nsight Compute reports and exports, validation records and logs. The analysis
+reads the extracted archive directly, with no GPU:
+
+```bash
+mkdir -p /tmp/gb300 && tar -xzf supplementary/study-20260923T173150Z.tar.gz -C /tmp/gb300
+make regenerate STUDY=/tmp/gb300/study-20260923T173150Z
+diff -r results runs/regenerated-<UTC>
+```
+
+Eleven of the thirteen files come out byte-identical, including all six figures and
+`gemm_profile.csv`, which is rebuilt from the exported counters. In the two Experiment V CSVs,
+6 of 738 values differ by 10⁻⁶, one unit in the last printed digit: the archived
+`precision/raw/repetitions.csv` stores six decimals, whereas the published means were computed
+from full-precision values. New runs store full precision, so their summaries regenerate exactly.
+
+## Limitations
+
+- One GPU in one system: the results describe this B300 SXM6 AC, driver, software stack and
+  configuration grid, and are not architectural peaks.
+- Clocks are not locked. Throughput includes the operating clock (DVFS), which Experiment III
+  samples; its power samples are indicative telemetry, not a calibrated energy measurement.
+- The GEMM measurements reuse operands across launches (hot caches), so the L2 can hold part of
+  them.
+- Experiment I's effective rate is useful bytes over kernel time, not a DRAM-bandwidth counter or
+  a GEMM prediction. Experiment II's TFLOP/s per SM is modeled from cycles and the profiled clock.
+- Experiments IV and V compare specific CuTe DSL example kernels with cuBLASLt's first supported
+  heuristic algorithm, without autotuning; they do not establish a ceiling for either library.
+- The vendor peaks in `precision_comparison.csv` are nominal dense values.
+- The traffic profile has one launch per case; aggregate counters cannot attribute rereads to an
+  operand.
+- Three campaigns or three repetitions support descriptive statistics, not inference.
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `benchmark_common.cuh` | Device check and argument parsing shared by the CUDA benchmarks |
+| `memory_paths/` | Experiment I: LDGSTS and TMA kernels |
+| `umma_throughput/` | Experiments II and III: UMMA and Tensor Memory kernels |
+| `gemm_comparison/` | Experiment IV driver and its cuBLASLt bridge |
+| `precision_comparison/` | Experiment V driver, operand-sharing cuBLASLt baseline and its bridge |
+| `scripts/` | Campaign runner, GPU selection, clock telemetry, Nsight Compute captures, GEMM profile, run metadata |
+| `analysis/` | Statistics and figures |
+| `results/` | Published CSV summaries and SVG figures |
+| `Dockerfile`, `VERSIONS.env`, `Makefile` | Pinned environment and commands |
+| `build/`, `runs/` | Binaries and measurements; not tracked by Git |
+
+## Versions
+
+- `tfm-acquisition` (commit `6868f00`): the exact code that acquired the published study; the
+  archive records this commit.
+- `tfm-final`: the cleaned repository. The cleanup removed workflow infrastructure only:
+  per-file source hashes, manifests, state files and a separate checker of saved runs, replaced
+  by Git history and one small `metadata.json` per run. It did not change the kernels,
+  parameters, timing, validation, statistics or published results. For new runs, a study writes
+  all thirteen summaries to its `analysis/` directory, and Experiment V's raw tables keep full
+  float precision.
 
 BSD 3-Clause; see `LICENSE`.
