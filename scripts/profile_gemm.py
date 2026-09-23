@@ -4,30 +4,27 @@
 Each capture runs in its own process under ncu. That worker reuses the operand generation,
 layouts, validation, kernel preparation and warm-up of gemm_comparison/gemm_comparison.py and
 wraps exactly one further launch in the only NVTX range the Nsight Compute filter admits.
-Profiler durations are diagnostics; the CUDA-event results of the analysis named by
---gemm-summary remain the performance data.
+Profiler durations are diagnostics; the CUDA-event results of Experiment IV remain the
+performance data. analysis/analyze.py turns the exported counters into gemm_profile.csv.
 """
 
 import argparse
 import csv
-import ctypes
-import datetime as dt
 import hashlib
 import json
 import math
 import re
 import subprocess
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import ncu_capture  # noqa: E402  (scripts/ is this script's directory)
-import provenance  # noqa: E402
-import run_campaign  # noqa: E402
 from gemm_comparison import gemm_comparison as gemm  # noqa: E402
-from ncu_capture import export_csv, ncu, parse_kernels  # noqa: E402
+from scripts import metadata, run_campaign  # noqa: E402
+from scripts.ncu_capture import benchmark_command, export_csv, ncu, parse_kernels  # noqa: E402
 
 SHAPES = ((4096, 4096, 4096, 1), (8192, 8192, 8192, 1), (32768, 512, 4096, 1))
 VARIANTS = ("persistent_2cta", "heuristic_first_supported")
@@ -51,22 +48,16 @@ NCU_SETTINGS = {
             ("--cache-control", "none"), ("--replay-mode", "application")),
 }
 CAPTURE_TIMEOUT_S = 1800
-SOURCES = ("scripts/profile_gemm.py", "scripts/provenance.py", "scripts/ncu_capture.py",
-           "scripts/run_campaign.py", "gemm_comparison/gemm_comparison.py",
-           "gemm_comparison/cublaslt_bridge.cu")
-TIME_SCALE_NS = {"ns": 1.0, "nsecond": 1.0, "us": 1e3, "usecond": 1e3, "ms": 1e6, "msecond": 1e6}
-CLOCK_SCALE_HZ = {"hz": 1.0, "cycle/second": 1.0, "cycle/nsecond": 1e9}
-SUMMARY_FIELDS = ("shape_id", "m", "n", "k", "l", "variant", "method", "cache_state", "status",
-                  "kernel_name",
-                  "validation", "dram_read_bytes", "dram_write_bytes", "compulsory_read_bytes",
-                  "dram_read_to_compulsory", "dram_read_excess_bytes", "output_bytes",
-                  "dram_write_to_output", "l2_tma_read_bytes", "l2_tma_read_to_dram_read",
-                  "profiled_duration_us", "profiled_sm_clock_mhz",
-                  "cuda_event_mean_kernel_time_us", "cuda_event_mean_tflops")
 
 
 def shape_id(shape):
     return "x".join(map(str, shape))
+
+
+# Capture order and file stems: both implementations of each shape.
+CASES = [(f"{index:02d}_{shape_id(shape[:3])}_{variant}", shape, variant)
+         for index, (shape, variant) in enumerate(
+             (shape, variant) for shape in SHAPES for variant in VARIANTS)]
 
 
 def parse_shape(value):
@@ -74,13 +65,6 @@ def parse_shape(value):
     if len(dimensions) != 3 or any(dimension <= 0 for dimension in dimensions):
         raise argparse.ArgumentTypeError("shape must be M,N,K")
     return (*dimensions, 1)
-
-
-def cublaslt_runtime():
-    library = ctypes.CDLL("libcublasLt.so.13")
-    library.cublasLtGetVersion.restype = ctypes.c_size_t
-    return {"version": int(library.cublasLtGetVersion()),
-            "libraries": provenance.loaded_library("libcublasLt")}
 
 
 def digest(torch, tensor):
@@ -116,43 +100,21 @@ def worker(shape, variant, result_path):
     finally:
         if bridge is not None:
             bridge.close()
-    properties = torch.cuda.get_device_properties(0)
     record = {
         "label": label, "variant": variant, "method": specification["method"],
-        "operands": {"a": "BFloat16 (M,K,L), K-major", "b": "BFloat16 (N,K,L), K-major",
-                     "output": "Float32 (M,N,L), N-major", "accumulator": "Float32",
-                     "seed": 1111, "generator": "gemm_comparison.create_operands",
-                     "sha256": {"a": digest(torch, operands["a_gpu"]),
-                                "b": digest(torch, operands["b_gpu"])}},
-        "validation": {"reference": "IEEE-FP32 einsum of the BF16 operands "
-                                    "(gemm_comparison.reference_result)",
-                       "atol": gemm.ATOL, "rtol": gemm.RTOL,
+        # profile() requires both implementations of a shape to report the same operands.
+        "operands_sha256": {"a": digest(torch, operands["a_gpu"]),
+                            "b": digest(torch, operands["b_gpu"])},
+        "validation": {"atol": gemm.ATOL, "rtol": gemm.RTOL,
                        "first_launch": "PASS", "after_profiled_launch": "PASS",
                        "max_abs_error_after_profiled_launch": error},
-        "warmup_launches": CAMPAIGN_WARMUP, "launches_in_nvtx_range": 1, "nvtx_range": NVTX_RANGE,
-        "device": {"name": properties.name, "sm_count": properties.multi_processor_count,
-                   "l2_cache_bytes": properties.L2_cache_size},
-        "cublaslt_runtime": cublaslt_runtime(),
     }
     Path(result_path).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
 
-class Log:
-    """Mirror progress messages to stderr and the study's execution log."""
-
-    def __init__(self, path):
-        self.handle = path.open("w", encoding="utf-8")
-
-    def __call__(self, message):
-        line = f"{dt.datetime.now(dt.timezone.utc).isoformat()} profile: {message}"
-        print(line, file=sys.stderr, flush=True)
-        self.handle.write(line + "\n")
-        self.handle.flush()
-
-
 def run_logged(command, log_path):
     with log_path.open("w", encoding="utf-8") as log:
-        log.write("$ " + " ".join(command) + "\n")
+        log.write("$ " + " ".join(map(str, command)) + "\n")
         log.flush()
         completed = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                    text=True, timeout=CAPTURE_TIMEOUT_S)
@@ -172,10 +134,11 @@ def query_metric(base):
     return None
 
 
-def calibrate_l2_metric(directory, log, ncu_settings):
+def calibrate_l2_metric(directory, ncu_settings):
     """Admit the L2 read metric only if the device supports it and a known stream confirms it."""
     query = query_metric(L2_READ_BASE)
-    record = {"metric": L2_READ_METRIC, "query": query, "collected": False}
+    record = {"metric": L2_READ_METRIC, "query": query, "collected": False,
+              "benchmark": L2_CALIBRATION, "tolerance": L2_CALIBRATION_TOLERANCE}
     if query is None:
         record["reason"] = "not reported by ncu --query-metrics for this device"
         return record
@@ -186,11 +149,9 @@ def calibrate_l2_metric(directory, log, ncu_settings):
                   "--kernel-name-base", "function", "--kernel-name", L2_CALIBRATION["kernel_name"],
                   "--launch-count", "1", "--print-summary", "none",
                   "--metrics", ",".join(metrics), "-o", case, "--",
-                  *ncu_capture.benchmark_command(L2_CALIBRATION))
-    log(f"calibration: {' '.join(command)}")
+                  *benchmark_command(L2_CALIBRATION))
+    print(f"profile: calibration: {' '.join(command)}", file=sys.stderr, flush=True)
     status = run_logged(command, case.with_suffix(".log"))
-    record.update({"report": f"{case.name}.ncu-rep", "csv": f"{case.name}.csv",
-                   "log": f"{case.name}.log", "benchmark": L2_CALIBRATION})
     if status:
         record["reason"] = f"calibration capture exited with status {status}"
         return record
@@ -207,8 +168,7 @@ def calibrate_l2_metric(directory, log, ncu_settings):
     ratio = values[L2_READ_METRIC] / useful
     record.update({"useful_bytes": useful, "metrics": values, "units": units,
                    "l2_read_to_useful": ratio,
-                   "dram_read_to_useful": values["dram__bytes_read.sum"] / useful,
-                   "tolerance": L2_CALIBRATION_TOLERANCE})
+                   "dram_read_to_useful": values["dram__bytes_read.sum"] / useful})
     if abs(ratio - 1) <= L2_CALIBRATION_TOLERANCE:
         record["collected"] = True
     else:
@@ -216,75 +176,8 @@ def calibrate_l2_metric(directory, log, ncu_settings):
     return record
 
 
-def resolve(path):
-    return path if path.is_absolute() else ROOT / path
-
-
-def read_gemm_summary(path, gpu):
-    """Load the CUDA-event reference from an analysis whose manifest names this GPU.
-
-    The published results/ predate the manifest, so a new profile cannot fall back to them.
-    """
-    path = resolve(path)
-    manifest_path = path.parent / "analysis.json"
-    if path.name != "gemm_comparison.csv" or not path.exists() or not manifest_path.exists():
-        raise ValueError(f"{path} must be the gemm_comparison.csv of a make analyze output "
-                         "directory, next to its analysis.json")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    digest = provenance.file_sha256(path)
-    if manifest.get("outputs", {}).get(path.name) != digest:
-        raise ValueError(f"{path} differs from the file recorded in {manifest_path}")
-    if manifest.get("gpu_uuid") != gpu["uuid"]:
-        raise ValueError(f"{path} was measured on {manifest.get('gpu_uuid')}, not on the "
-                         f"profiled GPU {gpu['uuid']}")
-    with path.open(newline="", encoding="utf-8") as source:
-        rows = {(row["shape_id"], row["variant"]): row for row in csv.DictReader(source)}
-    missing = [f"{shape_id(shape)}/{variant}" for shape in SHAPES for variant in VARIANTS
-               if (shape_id(shape), variant) not in rows]
-    if missing:
-        raise ValueError(f"{path} lacks the rows {missing}")
-    return {"path": str(path.relative_to(ROOT) if path.is_relative_to(ROOT) else path),
-            "sha256": digest, "manifest": "analysis.json",
-            "manifest_sha256": provenance.file_sha256(manifest_path),
-            "source_commit": manifest["source_commit"], "gpu_uuid": manifest["gpu_uuid"],
-            "campaigns": [campaign["campaign_id"] for campaign in manifest["campaigns"]],
-            "rows": {f"{shape_id(shape)}/{variant}": {
-                "mean_tflops": float(rows[(shape_id(shape), variant)]["mean_tflops"]),
-                "mean_kernel_time_us":
-                    1e3 * float(rows[(shape_id(shape), variant)]["mean_kernel_time_ms"])}
-                for shape in SHAPES for variant in VARIANTS}}
-
-
-def traffic(shape, metrics, units):
-    """Relate the aggregate counters to the compulsory operand and output bytes."""
-    m, n, k, batch = shape
-    a_bytes, b_bytes, output_bytes = 2 * m * k * batch, 2 * n * k * batch, 4 * m * n * batch
-    compulsory = a_bytes + b_bytes
-    read, write = metrics["dram__bytes_read.sum"], metrics["dram__bytes_write.sum"]
-    duration_ns = metrics["gpu__time_duration.sum"] * TIME_SCALE_NS[
-        units["gpu__time_duration.sum"].lower()]
-    clock_hz = metrics["sm__cycles_elapsed.avg.per_second"] * CLOCK_SCALE_HZ[
-        units["sm__cycles_elapsed.avg.per_second"].lower()]
-    result = {"a_bytes": a_bytes, "b_bytes": b_bytes, "output_bytes": output_bytes,
-              "compulsory_read_bytes": compulsory,
-              "dram_read_to_compulsory": read / compulsory,
-              "dram_read_excess_bytes": read - compulsory,
-              # Hypothetical equivalents only: aggregate counters cannot attribute rereads.
-              "dram_read_excess_in_a_sizes": (read - compulsory) / a_bytes,
-              "dram_read_excess_in_b_sizes": (read - compulsory) / b_bytes,
-              "dram_write_to_output": write / output_bytes,
-              "profiled_duration_us": duration_ns / 1e3,
-              "profiled_sm_clock_mhz": clock_hz / 1e6,
-              "profiled_dram_read_tb_per_s": read / duration_ns / 1e3}
-    if L2_READ_METRIC in metrics:
-        result["l2_tma_read_bytes"] = metrics[L2_READ_METRIC]
-        # A hot-cache launch can have no DRAM reads; its L2/DRAM ratio is then undefined.
-        result["l2_tma_read_to_dram_read"] = metrics[L2_READ_METRIC] / read if read else None
-    return result
-
-
-def capture(directory, index, shape, variant, metrics, log, ncu_settings, reference):
-    case = f"{index:02d}_{shape_id(shape[:3])}_{variant}"
+def capture(directory, case, shape, variant, metrics, ncu_settings):
+    """Profile one validated launch; fail unless exactly one named kernel ran in the range."""
     stem = directory / case
     command = ncu(*(item for pair in ncu_settings for item in pair), "--devices", "0",
                   "--nvtx", "--nvtx-include", f"{NVTX_RANGE}/", "--kernel-name-base", "function",
@@ -292,177 +185,71 @@ def capture(directory, index, shape, variant, metrics, log, ncu_settings, refere
                   sys.executable, Path(__file__).resolve(), "--worker",
                   "--shape", ",".join(map(str, shape[:3])), "--variant", variant,
                   "--result", stem.with_suffix(".worker.json"))
-    log(f"{case}: {' '.join(command)}")
-    record = {"case": case, "shape_id": shape_id(shape), "m": shape[0], "n": shape[1],
-              "k": shape[2], "l": shape[3], "variant": variant,
-              "method": "cutedsl" if variant == "persistent_2cta" else "cublaslt",
-              "files": {"report": f"{case}.ncu-rep", "csv": f"{case}.csv", "log": f"{case}.log",
-                        "worker": f"{case}.worker.json"},
-              "status": "FAIL", "problems": []}
+    print(f"profile: {case}: {' '.join(map(str, command))}", file=sys.stderr, flush=True)
     status = run_logged(command, stem.with_suffix(".log"))
     if status:
-        record["problems"].append(f"ncu or the worker exited with status {status}")
-    worker_path = stem.with_suffix(".worker.json")
-    if worker_path.exists():
-        record["worker"] = json.loads(worker_path.read_text(encoding="utf-8"))
-        validation = record["worker"]["validation"]
-        record["validation"] = ("PASS" if validation["first_launch"] == "PASS" and
-                                validation["after_profiled_launch"] == "PASS" else "FAIL")
-    else:
-        record["validation"] = "FAIL"
-        record["problems"].append("the worker did not report a validated launch")
-    report = stem.with_suffix(".ncu-rep")
-    if report.exists():
-        try:
-            kernels, units = parse_kernels(export_csv(report, stem.with_suffix(".csv")), metrics)
-        except (ValueError, subprocess.SubprocessError) as error:
-            kernels, units = [], {}
-            record["problems"].append(f"cannot read the report: {error}")
-        record["kernel_count"] = len(kernels)
-        record["units"] = units
-        if len(kernels) != 1:
-            record["problems"].append(f"expected one kernel in the NVTX range, found {len(kernels)}")
-        else:
-            kernel = kernels[0]
-            record["kernel"] = {key: kernel[key] for key in ("name", "block_size", "grid_size",
-                                                             "nvtx_ranges")}
-            record["metrics"] = kernel["metrics"]
-            if NVTX_RANGE not in kernel["nvtx_ranges"]:
-                record["problems"].append("the profiled kernel lies outside the NVTX range")
-            if not kernel["name"]:
-                record["problems"].append("the export has no kernel name")
-            if any(not math.isfinite(value) or value < 0 for value in kernel["metrics"].values()):
-                record["problems"].append("a requested metric is missing or negative")
-            elif any(kernel["metrics"][metric] <= 0 for metric in TIMING_METRICS):
-                record["problems"].append("the profiled duration and SM clock must be positive")
-            else:
-                record["traffic"] = traffic(shape, kernel["metrics"], units)
-    else:
-        record["problems"].append("ncu wrote no report")
-    record["cuda_event_reference"] = reference
-    if not record["problems"] and record["validation"] == "PASS":
-        record["status"] = "PASS"
-    log(f"{case}: {record['status']} {record['problems'] or ''}".rstrip())
+        raise RuntimeError(f"{case}: ncu or the validated worker exited with status {status}; "
+                           f"see {stem.with_suffix('.log')}")
+    # The worker writes its record only after both validations passed.
+    record = json.loads(stem.with_suffix(".worker.json").read_text(encoding="utf-8"))
+    kernels, _ = parse_kernels(export_csv(stem.with_suffix(".ncu-rep"),
+                                          stem.with_suffix(".csv")), metrics)
+    if len(kernels) != 1 or NVTX_RANGE not in kernels[0]["nvtx_ranges"] or not kernels[0]["name"]:
+        raise RuntimeError(f"{case}: expected one named kernel inside the NVTX range, "
+                           f"found {len(kernels)}")
+    values = kernels[0]["metrics"]
+    if any(not math.isfinite(value) or value < 0 for value in values.values()) or \
+            any(values[metric] <= 0 for metric in TIMING_METRICS):
+        raise RuntimeError(f"{case}: a counter is invalid, or the duration or SM clock is zero")
     return record
 
 
-def summary_rows(captures, cache_state):
-    rows = []
-    for record in captures:
-        traffic_record = record.get("traffic", {})
-        reference = record.get("cuda_event_reference") or {}
-        metrics = record.get("metrics", {})
-        rows.append({
-            **{key: record[key] for key in ("shape_id", "m", "n", "k", "l", "variant",
-                                            "method", "status", "validation")},
-            "cache_state": cache_state,
-            "kernel_name": record.get("kernel", {}).get("name", ""),
-            "dram_read_bytes": metrics.get("dram__bytes_read.sum", ""),
-            "dram_write_bytes": metrics.get("dram__bytes_write.sum", ""),
-            "output_bytes": traffic_record.get("output_bytes", ""),
-            "l2_tma_read_bytes": traffic_record.get("l2_tma_read_bytes", ""),
-            **{key: traffic_record.get(key, "") for key in (
-                "compulsory_read_bytes", "dram_read_to_compulsory", "dram_read_excess_bytes",
-                "dram_write_to_output", "l2_tma_read_to_dram_read", "profiled_duration_us",
-                "profiled_sm_clock_mhz")},
-            "cuda_event_mean_kernel_time_us": reference.get("mean_kernel_time_us", ""),
-            "cuda_event_mean_tflops": reference.get("mean_tflops", "")})
-    return rows
-
-
-def profile(output, cache_state, gemm_summary):
+def profile(output, cache_state):
     ncu_settings = NCU_SETTINGS[cache_state]
-    created = dt.datetime.now(dt.timezone.utc).isoformat()
-    environment = {"gpu": provenance.gpu_identity(), "software": provenance.software_versions(),
-                   "ncu": provenance.ncu_version(),
-                   "repository": provenance.repository_state(SOURCES),
-                   "pinned": provenance.pinned_versions()}
-    # Reject a missing, altered or foreign CUDA-event reference before any capture.
-    summary = read_gemm_summary(gemm_summary, environment["gpu"])
-    directory = resolve(output)
+    directory = output if output.is_absolute() else ROOT / output
     directory.mkdir(parents=True, exist_ok=False)
-    log = Log(directory / "profile.log")
-    log(f"GPU {environment['gpu']['uuid']} ({environment['gpu']['name']}), {environment['ncu']}")
-    log(f"CUDA-event reference {summary['path']} (sha256 {summary['sha256']}; campaigns "
-        f"{', '.join(summary['campaigns'])}; commit {summary['source_commit']})")
+    record = {"cache_state": cache_state, "created_utc": metadata.utc_now(),
+              **metadata.environment(),
+              "ncu_settings": {flag.lstrip("-"): value for flag, value in ncu_settings},
+              "nvtx_range": NVTX_RANGE, "warmup_launches": CAMPAIGN_WARMUP}
 
-    l2_metric = calibrate_l2_metric(directory, log, ncu_settings)
-    log(f"L2 read metric {L2_READ_METRIC}: "
-        f"{'collected' if l2_metric['collected'] else 'not collected: ' + l2_metric['reason']}")
-    metrics = (*DRAM_METRICS, *TIMING_METRICS, *((L2_READ_METRIC,) if l2_metric["collected"] else ()))
+    calibration = calibrate_l2_metric(directory, ncu_settings)
+    verdict = "collected" if calibration["collected"] else f"not collected: {calibration['reason']}"
+    print(f"profile: L2 read metric {L2_READ_METRIC}: {verdict}", file=sys.stderr, flush=True)
+    metrics = (*DRAM_METRICS, *TIMING_METRICS,
+               *((L2_READ_METRIC,) if calibration["collected"] else ()))
 
-    captures = [capture(directory, index, shape, variant, metrics, log, ncu_settings,
-                        summary["rows"][f"{shape_id(shape)}/{variant}"])
-                for index, (shape, variant) in enumerate(
-                    (shape, variant) for shape in SHAPES for variant in VARIANTS)]
-    passed = sum(record["status"] == "PASS" for record in captures)
-    expected = len(SHAPES) * len(VARIANTS)
-    digests = {record["shape_id"]: set() for record in captures}
-    for record in captures:
-        if "worker" in record:
-            digests[record["shape_id"]].add(json.dumps(record["worker"]["operands"]["sha256"]))
-    shared_operands = all(len(values) == 1 for values in digests.values())
-    complete = passed == expected == len(captures) and shared_operands
-    with (directory / "gemm_profile.csv").open("w", newline="", encoding="utf-8") as destination:
-        writer = csv.DictWriter(destination, fieldnames=SUMMARY_FIELDS, lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(summary_rows(captures, cache_state))
-    index = {
-        "study": "gemm_profile", "cache_state": cache_state,
-        "state": "COMPLETE" if complete else "INCOMPLETE",
-        "created_utc": created, "command": [sys.executable, *sys.argv],
-        "expected_count": expected, "captured_count": len(captures), "passed_count": passed,
-        "shared_operands_per_shape": shared_operands,
-        "environment": environment,
-        "gemm_summary": {key: value for key, value in summary.items() if key != "rows"},
-        "protocol": {
-            "shapes": [shape_id(shape) for shape in SHAPES], "variants": list(VARIANTS),
-            "operands_and_validation": "gemm_comparison.create_operands, reference_result, "
-                                       "validate_result and prepare_candidate",
-            "warmup_launches": CAMPAIGN_WARMUP, "launches_in_nvtx_range": 1,
-            "outside_capture": ["compilation or plan creation", "reference calculation",
-                                "first validated launch", "warm-up launches",
-                                "post-capture validation"],
-            "nvtx_filter": f"{NVTX_RANGE}/",
-            "ncu_settings": {flag.lstrip("-"): value for flag, value in ncu_settings},
-            "cache_interpretation": ("profiler flushes caches before replay passes" if
-                                     cache_state == "cold" else
-                                     "application replays validation and warm-up before each "
-                                     "profiled launch; profiler does not flush caches"),
-            "metrics": list(metrics),
-            "performance_results": f"CUDA-event measurements in {summary['path']}; "
-                                   "profiler durations are diagnostics"},
-        "l2_read_metric": l2_metric,
-        "captures": captures,
-    }
-    (directory / "index.json").write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
-    log(f"{index['state']}: {passed}/{expected} captures passed; operands shared per shape: "
-        f"{shared_operands}; {directory}")
-    return complete
+    operands = defaultdict(set)
+    for case, shape, variant in CASES:
+        worker_record = capture(directory, case, shape, variant, metrics, ncu_settings)
+        operands[shape].add(json.dumps(worker_record["operands_sha256"], sort_keys=True))
+    if any(len(digests) != 1 for digests in operands.values()):
+        raise RuntimeError("the two implementations of a shape were profiled on different operands")
+
+    record.update({"metrics": list(metrics), "l2_read_metric": calibration,
+                   "captures": [case for case, _, _ in CASES],
+                   "completed_utc": metadata.utc_now()})
+    (directory / "metadata.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    print(f"profile: complete {directory}", file=sys.stderr)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--output", type=Path, help="new profile directory")
     parser.add_argument("--cache-state", choices=tuple(NCU_SETTINGS),
-                        help="cold: kernel replay after a cache flush; hot: application replay "
-                             "of validation and warm-up before every pass, without a flush")
-    parser.add_argument("--gemm-summary", type=Path,
-                        help="gemm_comparison.csv written by make analyze for the new campaigns")
+                        help="hot: application replay of validation and warm-up before every "
+                             "pass, without a flush; cold: kernel replay after a cache flush")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--shape", type=parse_shape, help=argparse.SUPPRESS)
     parser.add_argument("--variant", choices=VARIANTS, help=argparse.SUPPRESS)
     parser.add_argument("--result", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.worker:
-        if not (args.shape and args.variant and args.result):
-            parser.error("--worker requires --shape, --variant and --result")
         worker(args.shape, args.variant, args.result)
-        return
-    if not (args.output and args.cache_state and args.gemm_summary):
-        parser.error("--output, --cache-state and --gemm-summary are required")
-    if not profile(args.output, args.cache_state, args.gemm_summary):
-        raise SystemExit(2)
+    elif args.output and args.cache_state:
+        profile(args.output, args.cache_state)
+    else:
+        parser.error("--output and --cache-state are required")
 
 
 if __name__ == "__main__":

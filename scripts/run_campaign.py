@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Run Experiments I–IV with the final parameters inside one GPU-selected container.
+"""Run Experiments I–IV with the study's parameters inside the GPU-selected container.
 
-A campaign runs all four experiments and the eight Nsight Compute captures. --experiments runs a
-subset for the per-experiment Makefile targets, with only that subset's own captures.
+A campaign runs all four experiments, then their eight Nsight Compute captures. The
+per-experiment Makefile targets pass --experiments to run one of them with only its captures.
+metadata.json is written last, so it exists only for a complete run.
 """
 
 import argparse
 import csv
-import datetime as dt
 import io
 import json
 import os
@@ -16,23 +16,19 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-import gpu_telemetry
-import ncu_capture
-import provenance
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts import gpu_telemetry, metadata, ncu_capture  # noqa: E402
+
 # Final measurement parameters of every campaign and single-experiment run.
 MEMORY = {"working_set_mib": 512, "passes": 32, "warmup_ms": 2000, "repetitions": 30}
 UMMA = {"iterations": 1000, "warmup_iterations": 10, "repetitions": 30}
 GEMM = {"warmup_iterations": 2, "iterations": 10}
+MEMORY_METHODS = ("ldgsts", "tma")
+UMMA_METHODS = ("umma_1sm", "umma_2sm")
 TELEMETRY_INTERVAL_MS = 50
 MINIMUM_SAMPLES_PER_CONFIGURATION = 3
-SOURCES = ("benchmark_common.cuh", "memory_paths/memory_common.cuh", "memory_paths/ldgsts.cu",
-           "memory_paths/tma.cu", "umma_throughput/umma_common.cuh", "umma_throughput/umma_1sm.cu",
-           "umma_throughput/umma_2sm.cu", "umma_throughput/umma_device_scaling.cu",
-           "gemm_comparison/gemm_comparison.py", "gemm_comparison/cublaslt_bridge.cu",
-           "scripts/run_campaign.py", "scripts/gpu_telemetry.py", "scripts/ncu_capture.py",
-           "scripts/provenance.py", "scripts/run_gpu.sh")
 
 
 def run(command):
@@ -49,21 +45,20 @@ def write_rows(path, rows, expected):
         writer = csv.DictWriter(output, fieldnames=list(rows[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
-    return len(rows)
 
 
 def memory_paths(raw):
     rows = []
     for stages in (2, 4, 8):
         for in_flight in (16, 32, 64):
-            for method in ("ldgsts", "tma"):
+            for method in MEMORY_METHODS:
                 rows.extend(run([
                     f"build/memory_paths/{method}", "--stages", str(stages),
                     "--bytes-in-flight-kib", str(in_flight), "--run-kind", "benchmark",
                     "--working-set-mib", str(MEMORY["working_set_mib"]),
                     "--passes", str(MEMORY["passes"]), "--warmup-ms", str(MEMORY["warmup_ms"]),
                     "--repetitions", str(MEMORY["repetitions"])]))
-    return {"rows": write_rows(raw / "memory_paths.csv", rows, 18 * MEMORY["repetitions"])}
+    write_rows(raw / "memory_paths.csv", rows, 18 * MEMORY["repetitions"])
 
 
 UMMA_ARGUMENTS = ["--run-kind", "benchmark", "--iterations", str(UMMA["iterations"]),
@@ -75,10 +70,10 @@ def umma_throughput(raw):
     rows = []
     for n in (64, 128, 256):
         for depth in (4, 16, 64, 256):
-            for method in ("umma_1sm", "umma_2sm"):
+            for method in UMMA_METHODS:
                 rows.extend(run([f"build/umma_throughput/{method}", *UMMA_ARGUMENTS,
                                  "--n", str(n), "--depth", str(depth)]))
-    return {"rows": write_rows(raw / "umma_throughput.csv", rows, 24 * UMMA["repetitions"])}
+    write_rows(raw / "umma_throughput.csv", rows, 24 * UMMA["repetitions"])
 
 
 def telemetry_overlap(rows, samples):
@@ -103,19 +98,19 @@ def umma_device_scaling(raw):
     with gpu_telemetry.ClockSampler(gpu, TELEMETRY_INTERVAL_MS) as sampler:
         rows = run(["build/umma_throughput/umma_device_scaling", *UMMA_ARGUMENTS])
     summary = sampler.verify()
-    summary["written_count"] = sampler.write(raw / "umma_device_scaling_telemetry.csv")
+    sampler.write(raw / "umma_device_scaling_telemetry.csv")
     summary["samples_per_configuration"] = telemetry_overlap(rows, sampler.samples)
     if min(summary["samples_per_configuration"].values()) < MINIMUM_SAMPLES_PER_CONFIGURATION:
         raise RuntimeError(f"too few clock samples: {summary['samples_per_configuration']}")
-    count = write_rows(raw / "umma_device_scaling.csv", rows, 4 * UMMA["repetitions"])
-    return {"rows": count, "telemetry": {**summary, "state": "COMPLETE"}}
+    write_rows(raw / "umma_device_scaling.csv", rows, 4 * UMMA["repetitions"])
+    return summary
 
 
 def gemm_comparison(raw):
     rows = run([sys.executable, "gemm_comparison/gemm_comparison.py",
                 "--warmup-iterations", str(GEMM["warmup_iterations"]),
                 "--iterations", str(GEMM["iterations"])])
-    return {"rows": write_rows(raw / "gemm_comparison.csv", rows, 20)}
+    write_rows(raw / "gemm_comparison.csv", rows, 20)
 
 
 EXPERIMENTS = {"memory_paths": memory_paths, "umma_throughput": umma_throughput,
@@ -124,52 +119,36 @@ EXPERIMENTS = {"memory_paths": memory_paths, "umma_throughput": umma_throughput,
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--campaign-id", required=True)
-    parser.add_argument("--output-root", type=Path, default=Path("runs"))
-    parser.add_argument("--experiments", default=",".join(EXPERIMENTS),
-                        help="comma-separated subset of " + ",".join(EXPERIMENTS))
+    parser.add_argument("--output", type=Path, required=True,
+                        help="new run directory; an existing one is never reused")
+    parser.add_argument("--experiments", nargs="+", choices=EXPERIMENTS, default=list(EXPERIMENTS),
+                        help="run only these experiments (default: all four)")
     args = parser.parse_args()
-    selected = {name.strip() for name in args.experiments.split(",") if name.strip()}
-    if not selected or selected - set(EXPERIMENTS):
-        parser.error("--experiments must name a subset of " + ",".join(EXPERIMENTS))
-    experiments = tuple(name for name in EXPERIMENTS if name in selected)
+    experiments = [name for name in EXPERIMENTS if name in args.experiments]
 
-    now = dt.datetime.now(dt.timezone.utc)
-    root = args.output_root if args.output_root.is_absolute() else ROOT / args.output_root
-    directory = root / args.campaign_id
+    directory = args.output if args.output.is_absolute() else ROOT / args.output
     directory.mkdir(parents=True, exist_ok=False)
     raw = directory / "raw"
     raw.mkdir()
-    # Identify the GPU and the exact sources before any measurement.
-    environment = {"gpu": provenance.gpu_identity(), "software": provenance.software_versions(),
-                   "repository": provenance.repository_state(SOURCES),
-                   "pinned": provenance.pinned_versions()}
-
-    counts, telemetry = {}, {"state": "NOT_RUN"}
+    # Identify the GPU and the software before any measurement.
+    record = {"experiments": experiments, "created_utc": metadata.utc_now(),
+              **metadata.environment(),
+              "parameters": {"memory_paths": MEMORY, "umma": UMMA, "gemm_comparison": GEMM,
+                             "telemetry_interval_ms": TELEMETRY_INTERVAL_MS}}
     for name in experiments:
         result = EXPERIMENTS[name](raw)
-        counts[name] = result["rows"]
-        telemetry = result.get("telemetry", telemetry)
+        if name == "umma_device_scaling":
+            record["telemetry"] = result
 
     # Profile after timing so NCU replay cannot affect measured throughput.
     cases = ncu_capture.planned_cases(experiments)
-    profile = {"state": "NONE_PLANNED", "captured_count": 0, "cases": []}
     if cases:
-        profile = ncu_capture.capture(directory, cases)
-        environment["ncu"] = provenance.ncu_version()
+        ncu_capture.capture(directory, cases)
+    record["ncu_cases"] = [case["case"] for case in cases]
+    record["completed_utc"] = metadata.utc_now()
+    (directory / "metadata.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    print(f"campaign: complete {directory}", file=sys.stderr)
 
-    metadata = {"campaign_id": args.campaign_id, "kind": "final", "state": "COMPLETE",
-                "created_utc": now.isoformat(),
-                "completed_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
-                "gpu": environment["gpu"], "environment": environment,
-                "experiments": list(experiments), "row_counts": counts,
-                "parameters": {"memory_paths": MEMORY, "umma": UMMA, "gemm_comparison": GEMM,
-                               "telemetry_interval_ms": TELEMETRY_INTERVAL_MS},
-                "telemetry": telemetry,
-                "ncu": {"state": profile["state"], "captured_count": profile["captured_count"],
-                        "cases": [case["case"] for case in profile["cases"]]}}
-    (directory / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-    print(f"campaign: COMPLETE {directory}", file=sys.stderr)
 
 if __name__ == "__main__":
     try:

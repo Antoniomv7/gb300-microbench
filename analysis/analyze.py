@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""Summarize three final campaigns and generate four thesis figures.
+"""Compute every published summary and figure from the raw measurements.
 
-check_campaign and check_final_campaigns are also the completeness gate of
-scripts/check_diagnostics.py, for single-experiment runs and for the three campaigns of a study.
+Experiments I–IV: the median of each configuration within a campaign, then the mean, sample
+standard deviation and coefficient of variation across three independent campaigns.
+Experiment V: the same statistics over the three repetitions of each shape and format.
+GEMM traffic profile: Nsight Compute counters relative to the compulsory operand bytes.
+
+--study regenerates the thirteen files of results/ from a make final-study directory, such as
+the extracted study-20260923T173150Z archive. The analysis needs no GPU.
 """
 
 import argparse
 import csv
 import datetime as dt
-import html
 import json
 import math
 import statistics
-import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -20,25 +23,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scripts import ncu_capture, provenance  # noqa: E402
+from analysis import figures  # noqa: E402
+from precision_comparison import precision_comparison as precision  # noqa: E402
+from precision_comparison.cublaslt_precision import CUTE_KERNELS, arithmetic  # noqa: E402
+from scripts import ncu_capture, profile_gemm  # noqa: E402
+from scripts.run_campaign import (MEMORY_METHODS, MINIMUM_SAMPLES_PER_CONFIGURATION,  # noqa: E402
+                                  UMMA_METHODS)
 
-METHODS = ("ldgsts", "tma")
-UMMA_METHODS = ("umma_1sm", "umma_2sm")
 # Final parameters: 18 memory and 24 UMMA configurations, 4 scaling configurations,
 # 30 repetitions each, and 5 GEMM shapes with 4 candidates.
 EXPECTED_ROWS = {"memory_paths": 540, "umma_throughput": 720, "umma_device_scaling": 120,
                  "gemm_comparison": 20}
-EXPERIMENTS = tuple(EXPECTED_ROWS)
 # Six memory and two UMMA captures; the scaling and GEMM experiments have none.
-NCU_CASES = {experiment: {case["case"] for case in ncu_capture.planned_cases((experiment,))}
-             for experiment in EXPERIMENTS}
-COLORS = {"ldgsts": "#2563eb", "tma": "#d97706",
-          "umma_1sm": "#2563eb", "umma_2sm": "#d97706"}
-GEMM_COLORS = {"nonpersistent_1cta": "#2563eb", "persistent_1cta": "#7c3aed",
-               "persistent_2cta": "#d97706", "heuristic_first_supported": "#15803d"}
-SCALE_COLORS = {("umma_1sm", "isolated"): "#93c5fd", ("umma_1sm", "device_scale"): "#2563eb",
-                ("umma_2sm", "isolated"): "#fcd34d", ("umma_2sm", "device_scale"): "#d97706"}
-MINIMUM_CLOCK_SAMPLES = 3
+NCU_CASES = sorted(case["case"] for case in ncu_capture.PLAN)
+# Dense peak throughput NVIDIA lists for each input format, for the percent-of-peak column.
+VENDOR_DENSE_TFLOPS = {"bf16": 2250.0, "fp8": 4500.0, "nvfp4": 13500.0}
+TIME_SCALE_NS = {"ns": 1.0, "nsecond": 1.0, "us": 1e3, "usecond": 1e3, "ms": 1e6, "msecond": 1e6}
+CLOCK_SCALE_HZ = {"hz": 1.0, "cycle/second": 1.0, "cycle/nsecond": 1e9}
 
 
 def stats(values):
@@ -63,101 +64,42 @@ def read_csv(path):
         return list(csv.DictReader(source))
 
 
-def check_ncu(path, profile, experiments):
-    """The run's own Nsight Compute captures: each report and export present and consistent."""
-    expected = set().union(*(NCU_CASES[experiment] for experiment in experiments))
-    cases = profile.get("cases", [])
-    names = sorted(case.get("case") for case in cases)
-    if names != sorted(expected) or (expected and profile.get("state") != "COMPLETE"):
-        return [f"expected the Nsight Compute captures {sorted(expected)}, found {names}"]
-    problems = []
-    for case in cases:
-        files = [path / "ncu" / case.get(key, "missing") for key in ("report", "csv")]
-        if not all(file.exists() for file in files):
-            problems.append(f"{case['case']}: the NCU report or its export is missing")
-            continue
-        plan = next(item for item in ncu_capture.PLAN if item["case"] == case["case"])
-        try:
-            kernels, _ = ncu_capture.parse_kernels(files[1].read_text(encoding="utf-8"),
-                                                   plan["metrics"])
-        except ValueError as error:
-            problems.append(f"{case['case']}: {error}")
-            continue
-        if len(kernels) != 1 or kernels[0]["metrics"] != case.get("metrics"):
-            problems.append(f"{case['case']}: ncu/index.json disagrees with the NCU export")
-    return problems
+def write_csv(path, rows):
+    with path.open("w", newline="", encoding="utf-8") as destination:
+        writer = csv.DictWriter(destination, fieldnames=list(rows[0]), lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: f"{value:.6f}" if isinstance(value, float) else value
+                             for key, value in row.items()})
 
 
-def check_campaign(path):
-    """Load a campaign or single-experiment run and list every reason it is not valid.
+# Experiments I–IV ------------------------------------------------------------------------------
 
-    Its metadata names its experiments. Each needs its complete, validated rows; device scaling
-    needs its clock telemetry, and the memory and UMMA experiments their NCU captures.
-    """
-    path = Path(path).resolve()
-    metadata_path = path / "metadata.json"
-    if not metadata_path.exists():
-        return None, [f"{metadata_path} is missing; the run did not complete"]
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    problems = [] if metadata.get("state") == "COMPLETE" and metadata.get("kind") == "final" \
-        else ["not a completed run with the final parameters"]
-    repository = metadata.get("environment", {}).get("repository")
-    if not repository or not repository.get("commit") or not metadata.get("gpu", {}).get("uuid"):
-        problems.append("the GPU or the source commit was not recorded")
-    elif provenance.tracked_changes(repository):
-        problems.append("acquired with modified tracked files "
-                        f"{provenance.tracked_changes(repository)}")
-    experiments = metadata.get("experiments", [])
-    if not experiments or not set(experiments) <= set(EXPERIMENTS):
-        return None, problems + [f"unknown experiments {experiments}"]
-    record = {"path": path, "metadata": metadata, "data": {}, "telemetry": [], "profile": {}}
-    for experiment in experiments:
-        dataset = path / "raw" / f"{experiment}.csv"
-        rows = read_csv(dataset) if dataset.exists() else []
-        if len(rows) != EXPECTED_ROWS[experiment] or any(
-                row.get("correctness") not in ("OK", "PASS") for row in rows):
-            problems.append(f"{experiment}: expected {EXPECTED_ROWS[experiment]} validated rows, "
-                            f"found {len(rows)}")
-        record["data"][experiment] = rows
-    if "umma_device_scaling" in experiments:
-        telemetry = path / "raw/umma_device_scaling_telemetry.csv"
-        record["telemetry"] = read_csv(telemetry) if telemetry.exists() else []
-        try:
-            if metadata.get("telemetry", {}).get("state") != "COMPLETE":
-                raise ValueError("not recorded as complete")
-            clock_campaigns(record)
-        except (KeyError, ValueError) as error:
-            problems.append(f"device-scaling clock telemetry: {error}")
-    index = path / "ncu/index.json"
-    record["profile"] = json.loads(index.read_text(encoding="utf-8")) if index.exists() else {}
-    problems += check_ncu(path, record["profile"], experiments)
-    return record, problems
+def load_campaign(path):
+    """One campaign's validated samples, clock telemetry and Nsight Compute counters."""
+    data = {}
+    for experiment, expected in EXPECTED_ROWS.items():
+        rows = read_csv(path / "raw" / f"{experiment}.csv")
+        if len(rows) != expected or any(row["correctness"] not in ("OK", "PASS") for row in rows):
+            raise ValueError(f"{path}: {experiment} needs {expected} validated rows, "
+                             f"found {len(rows)}")
+        data[experiment] = rows
+    profile = json.loads((path / "ncu/index.json").read_text(encoding="utf-8"))
+    if sorted(case["case"] for case in profile["cases"]) != NCU_CASES:
+        raise ValueError(f"{path}: expected the Nsight Compute captures {NCU_CASES}")
+    metadata = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
+    return {"path": path, "gpu": metadata["gpu"]["uuid"], "data": data, "profile": profile,
+            "telemetry": read_csv(path / "raw/umma_device_scaling_telemetry.csv")}
 
 
-def check_final_campaigns(paths):
-    """Three complete, distinct campaigns on one GPU from one source commit."""
-    records, problems = [], []
-    if len(paths) != 3:
-        problems.append(f"exactly three campaigns are required, found {len(paths)}")
-    for path in paths:
-        record, found = check_campaign(path)
-        if record and record["metadata"]["experiments"] != list(EXPERIMENTS):
-            found.append("not a complete campaign; it ran only "
-                         + ", ".join(record["metadata"]["experiments"]))
-        problems += [f"{Path(path).name}: {problem}" for problem in found]
-        records.append(record)
-    if problems:
-        return records, problems
-    if len({record["path"] for record in records}) != 3 or \
-            len({record["metadata"]["campaign_id"] for record in records}) != 3:
-        problems.append("the three campaigns must be distinct")
-    if len({record["metadata"]["gpu"]["uuid"] for record in records}) != 1:
-        problems.append("the campaigns ran on different GPUs")
-    repositories = [record["metadata"]["environment"]["repository"] for record in records]
-    if len({json.dumps([repository["commit"], repository["source_sha256"]], sort_keys=True)
-            for repository in repositories}) != 1:
-        problems.append("the campaigns ran different source commits or source files")
-    return records, problems
+def load_campaigns(paths):
+    """Three distinct complete campaigns, all measured on the same GPU."""
+    campaigns = [load_campaign(Path(path).resolve()) for path in paths]
+    if len({campaign["path"] for campaign in campaigns}) != 3:
+        raise ValueError("three distinct campaigns are required")
+    if len({campaign["gpu"] for campaign in campaigns}) != 1:
+        raise ValueError("the campaigns ran on different GPUs")
+    return campaigns
 
 
 def grouped_medians(rows, fields, value):
@@ -184,7 +126,7 @@ def memory_results(records):
             ratios = [campaign[("tma", str(stages), str(size * 1024))] /
                       campaign[("ldgsts", str(stages), str(size * 1024))]
                       for campaign in campaigns]
-            for method in METHODS:
+            for method in MEMORY_METHODS:
                 key = (method, str(stages), str(size * 1024))
                 values = [campaign[key] for campaign in campaigns]
                 dram = []
@@ -201,7 +143,7 @@ def memory_results(records):
                 points.append({"method": method, "stages": stages,
                                "bytes_in_flight_kib": size, **stats(values)})
     maxima = {method: max((point for point in points if point["method"] == method),
-                          key=lambda point: point["mean"]) for method in METHODS}
+                          key=lambda point: point["mean"]) for method in MEMORY_METHODS}
     return rows, {"configurations": points, "maximum_by_method": maxima}
 
 
@@ -235,8 +177,7 @@ def umma_results(records):
         case = profile_case(record, "umma_throughput", best["method"],
                             n=best["n"], depth=best["depth"])
         if case:
-            unit = case["units"].get(metric, "").lower()
-            factor = {"cycle/nsecond": 1e9, "hz": 1.0}.get(unit)
+            factor = CLOCK_SCALE_HZ.get(case["units"].get(metric, "").lower())
             if factor:
                 cycles = campaign[(best["method"], str(best["n"]), str(best["depth"]))]
                 estimates.append(cycles / best["cta_group"] * case["metrics"][metric] * factor / 1e12)
@@ -262,9 +203,9 @@ def clock_campaigns(record):
     for key, spans in windows.items():
         inside = [sample for sample in samples
                   if any(start <= sample["moment"] <= end for start, end in spans)]
-        if len(inside) < MINIMUM_CLOCK_SAMPLES:
+        if len(inside) < MINIMUM_SAMPLES_PER_CONFIGURATION:
             raise ValueError(f"{'/'.join(key)}: fewer than "
-                             f"{MINIMUM_CLOCK_SAMPLES} concurrent clock samples")
+                             f"{MINIMUM_SAMPLES_PER_CONFIGURATION} concurrent clock samples")
         summary[key] = {"mean_sm_clock_mhz": statistics.fmean(s["sm_clock_mhz"] for s in inside),
                         "min_sm_clock_mhz": min(s["sm_clock_mhz"] for s in inside),
                         "max_sm_clock_mhz": max(s["sm_clock_mhz"] for s in inside),
@@ -377,260 +318,236 @@ def gemm_results(records):
     return rows, {"configurations": points, "shapes": shapes}
 
 
-def svg_text(x, y, value, **attributes):
-    values = {"x": f"{x:.1f}", "y": f"{y:.1f}", "font-family": "Arial, sans-serif",
-              "font-size": "12", "fill": "#334155"}
-    values.update({name.replace("_", "-"): item for name, item in attributes.items()})
-    properties = " ".join(f'{name}="{html.escape(str(item))}"'
-                          for name, item in values.items())
-    return f"<text {properties}>{html.escape(str(value))}</text>"
+# Experiment V ----------------------------------------------------------------------------------
+
+def load_precision(path):
+    """The per-repetition timings, validation records and cuBLASLt plans of a precision run."""
+    repetitions = [{**row, "shape_index": int(row["shape_index"]),
+                    "repetition": int(row["repetition"]),
+                    "kernel_time_us": float(row["kernel_time_us"]), "tflops": float(row["tflops"])}
+                   for row in read_csv(path / "raw/repetitions.csv")]
+    validation = [{**row, "shape_index": int(row["shape_index"]),
+                   "bit_exact": row["bit_exact"] == "True"}
+                  for row in read_csv(path / "raw/validation.csv")]
+    plans = json.loads((path / "raw/cublaslt_plans.json").read_text(encoding="utf-8"))
+    return repetitions, validation, plans
 
 
-def svg_start(title, subtitle, width=1260, height=490):
-    return [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
-            f'viewBox="0 0 {width} {height}" role="img" aria-label="{html.escape(title)}">',
-            '<rect width="100%" height="100%" fill="#ffffff"/>',
-            svg_text(34, 40, title, font_size="22", font_weight="700", fill="#0f172a"),
-            svg_text(34, 66, subtitle, font_size="13", fill="#64748b")]
+def configuration(record):
+    return record["shape_index"], record["precision"], record["implementation"]
 
 
-def line_figure(title, subtitle, panels, x_labels, y_label, footnote):
-    output = svg_start(title, subtitle)
-    panel_width, gap, left, top, bottom = 330, 65, 82, 126, 382
-    for index, panel in enumerate(panels):
-        x0 = left + index * (panel_width + gap)
-        points = [point for series in panel["series"].values() for point in series]
-        lower = min(point["minimum"] for point in points) * 0.96
-        upper = max(point["maximum"] for point in points) * 1.04
-        if upper <= lower:
-            upper = lower + 1
-        y = lambda value: bottom - (value - lower) * (bottom - top) / (upper - lower)
-        x = lambda position: x0 + position * panel_width / max(len(x_labels) - 1, 1)
-        output.append(svg_text(x0 + panel_width / 2, 106, panel["title"],
-                               text_anchor="middle", font_size="14", font_weight="700"))
-        for tick in range(5):
-            value = lower + tick * (upper - lower) / 4
-            yy = y(value)
-            output.append(f'<line x1="{x0:.1f}" y1="{yy:.1f}" x2="{x0 + panel_width:.1f}" '
-                          f'y2="{yy:.1f}" stroke="#e2e8f0"/>')
-            output.append(svg_text(x0 - 8, yy + 4, f"{value:,.0f}", text_anchor="end",
-                                   font_size="10", fill="#64748b"))
-        for position, label in enumerate(x_labels):
-            output.append(svg_text(x(position), bottom + 23, label,
-                                   text_anchor="middle", font_size="11"))
-        for method, series in panel["series"].items():
-            color = COLORS[method]
-            coordinates = " ".join(f"{x(i):.1f},{y(point['mean']):.1f}"
-                                   for i, point in enumerate(series))
-            output.append(f'<polyline points="{coordinates}" fill="none" '
-                          f'stroke="{color}" stroke-width="2.4"/>')
-            for position, point in enumerate(series):
-                xx = x(position)
-                output.append(f'<line x1="{xx:.1f}" y1="{y(point["minimum"]):.1f}" '
-                              f'x2="{xx:.1f}" y2="{y(point["maximum"]):.1f}" '
-                              f'stroke="{color}" stroke-width="1.5"/>')
-                output.append(f'<circle cx="{xx:.1f}" cy="{y(point["mean"]):.1f}" '
-                              f'r="4.1" fill="{color}"/>')
-    for position, method in enumerate(panels[0]["series"]):
-        xx = 875 + position * 175
-        output.append(f'<rect x="{xx}" y="80" width="12" height="12" fill="{COLORS[method]}"/>')
-        output.append(svg_text(xx + 18, 90, method, font_size="11"))
-    output.append(svg_text(17, 256, y_label, text_anchor="middle", font_size="12",
-                           transform="rotate(-90 17 256)"))
-    output.append(svg_text(34, 457, footnote, font_size="11", fill="#64748b"))
-    return "\n".join([*output, "</svg>"]) + "\n"
+def repetition_summary(repetitions, validation, key):
+    """The three timed repetitions of one implementation, shape and format, and their checks."""
+    samples = sorted((record for record in repetitions if configuration(record) == key),
+                     key=lambda record: record["repetition"])
+    checks = [record for record in validation if configuration(record) == key]
+    return {"samples": samples, "throughput": stats([record["tflops"] for record in samples]),
+            "time": stats([record["kernel_time_us"] for record in samples]),
+            "validation": "PASS" if len(samples) == precision.REPETITIONS and checks and all(
+                check["status"] == "PASS" for check in checks) else "FAIL",
+            "bit_exact": all(check["bit_exact"] for check in checks)}
 
 
-def memory_figure(summary):
-    lookup = {(point["method"], point["stages"], point["bytes_in_flight_kib"]): point
-              for point in summary["configurations"]}
-    panels = [{"title": f"Stages = {stages}",
-               "series": {method: [lookup[(method, stages, size)] for size in (16, 32, 64)]
-                          for method in METHODS}} for stages in (2, 4, 8)]
-    return line_figure("LDGSTS versus TMA: effective transfer rate",
-                       "Mean of three campaign medians; whiskers show the observed range.",
-                       panels, ("16 KiB", "32 KiB", "64 KiB"), "Effective GB/s",
-                       "Logical useful bytes divided by kernel time; not a direct DRAM bandwidth counter.")
-
-
-def umma_figure(summary):
-    lookup = {(point["method"], point["n"], point["depth"]): point
-              for point in summary["configurations"]}
-    panels = [{"title": f"N = {n}",
-               "series": {method: [lookup[(method, n, depth)] for depth in (4, 16, 64, 256)]
-                          for method in UMMA_METHODS}} for n in (64, 128, 256)]
-    return line_figure("BF16 UMMA: isolated 1-SM versus 2-SM throughput",
-                       "Mean of three campaign medians; timing uses the per-SM %clock64 counter.",
-                       panels, ("4", "16", "64", "256"), "FLOP/cycle/SM",
-                       "Pipeline depth on the x-axis; 2-SM throughput is normalized by its two active SMs.")
-
-
-def gemm_figure(summary):
-    width, height, left, right, top, bottom = 1260, 510, 82, 36, 135, 402
-    output = svg_start("CuTe DSL versus cuBLASLt: BF16 GEMM throughput",
-                       "Mean of three campaigns; whiskers show their minimum and maximum.", width, height)
-    points = summary["configurations"]
-    shapes = sorted({(point["shape_index"], point["shape_id"]) for point in points})
-    variants = tuple(GEMM_COLORS)
-    maximum = max(point["maximum"] for point in points) * 1.10
-    y = lambda value: bottom - value * (bottom - top) / maximum
-    for tick in range(6):
-        value = maximum * tick / 5
-        yy = y(value)
-        output.append(f'<line x1="{left}" y1="{yy:.1f}" x2="{width-right}" y2="{yy:.1f}" '
-                      'stroke="#e2e8f0"/>')
-        output.append(svg_text(left - 9, yy + 4, f"{value:,.0f}", text_anchor="end",
-                               font_size="10", fill="#64748b"))
-    labels = {"nonpersistent_1cta": "NP1", "persistent_1cta": "P1",
-              "persistent_2cta": "P2", "heuristic_first_supported": "cuBLASLt"}
-    for index, variant in enumerate(variants):
-        xx = 535 + index * 158
-        output.append(f'<rect x="{xx}" y="83" width="12" height="12" fill="{GEMM_COLORS[variant]}"/>')
-        output.append(svg_text(xx + 18, 94, labels[variant], font_size="11"))
-    lookup = {(point["shape_index"], point["variant"]): point for point in points}
-    group_width = (width - left - right) / len(shapes)
-    bar_width = (group_width - 48) / len(variants)
-    for index, (shape_index, shape_id) in enumerate(shapes):
-        for position, variant in enumerate(variants):
-            point = lookup[(shape_index, variant)]
-            xx = left + index * group_width + 20 + position * (bar_width + 2)
-            yy = y(point["mean"])
-            output.append(f'<rect x="{xx:.1f}" y="{yy:.1f}" width="{bar_width:.1f}" '
-                          f'height="{bottom-yy:.1f}" fill="{GEMM_COLORS[variant]}"/>')
-            center = xx + bar_width / 2
-            output.append(f'<line x1="{center:.1f}" y1="{y(point["minimum"]):.1f}" '
-                          f'x2="{center:.1f}" y2="{y(point["maximum"]):.1f}" stroke="#0f172a"/>')
-        label = "×".join(shape_id.removesuffix("x1").split("x")[:2])
-        output.append(svg_text(left + (index + 0.5) * group_width, bottom + 26,
-                               label, text_anchor="middle", font_size="11"))
-    output.append(svg_text(18, 268, "TFLOP/s", text_anchor="middle",
-                           transform="rotate(-90 18 268)"))
-    output.append(svg_text(34, 477,
-                           "Hot-cache kernel timing; all variants share operands and pass the same FP32 reference.",
-                           font_size="11", fill="#64748b"))
-    return "\n".join([*output, "</svg>"]) + "\n"
-
-
-def scaling_panel(output, x0, width, title, bars, unit, reference=None, decimals=0,
-                  baseline=0.0):
-    top, bottom = 145, 376
-    values = [point["maximum"] for _, _, point in bars] + ([reference] if reference else [])
-    maximum = max(values) * 1.12
-    span = maximum - baseline
-    y = lambda value: bottom - (value - baseline) * (bottom - top) / span
-    output.append(svg_text(x0 + width / 2, 119, title, text_anchor="middle",
-                           font_size="14", font_weight="700"))
-    for tick in range(5):
-        value = baseline + span * tick / 4
-        yy = y(value)
-        output.append(f'<line x1="{x0:.1f}" y1="{yy:.1f}" x2="{x0+width:.1f}" '
-                      f'y2="{yy:.1f}" stroke="#e2e8f0"/>')
-        output.append(svg_text(x0 - 8, yy + 4, f"{value:,.{decimals}f}",
-                               text_anchor="end", font_size="10"))
-    if reference:
-        output.append(f'<line x1="{x0:.1f}" y1="{y(reference):.1f}" x2="{x0+width:.1f}" '
-                      f'y2="{y(reference):.1f}" stroke="#15803d" stroke-dasharray="5 4"/>')
-    bar_width = width / (len(bars) * 2.1)
-    for index, (label, color, point) in enumerate(bars):
-        center = x0 + (index + 0.5) * width / len(bars)
-        yy = y(point["mean"])
-        output.append(f'<rect x="{center-bar_width/2:.1f}" y="{yy:.1f}" width="{bar_width:.1f}" '
-                      f'height="{bottom-yy:.1f}" fill="{color}"/>')
-        output.append(f'<line x1="{center:.1f}" y1="{y(point["minimum"]):.1f}" '
-                      f'x2="{center:.1f}" y2="{y(point["maximum"]):.1f}" stroke="#0f172a"/>')
-        output.append(svg_text(center, bottom + 23, label, text_anchor="middle", font_size="11"))
-    output.append(svg_text(x0 + width / 2, bottom + 44, unit,
-                           text_anchor="middle", font_size="11", fill="#64748b"))
-
-
-SCALE_LABELS = {("umma_1sm", "isolated"): "1-SM iso", ("umma_1sm", "device_scale"): "1-SM dev",
-                ("umma_2sm", "isolated"): "2-SM iso", ("umma_2sm", "device_scale"): "2-SM dev"}
-
-
-def scaling_figure(summary):
-    output = svg_start("BF16 UMMA: isolated work unit versus all usable SMs",
-                       "Independent throughput axes; SM clock sampled during the same timed campaigns.",
-                       width=1640, height=500)
-    lookup = {(point["method"], point["scale"]): point for point in summary["configurations"]}
-    efficiency = summary["scaling_efficiency"]
-    scaling_panel(output, 86, 300, "Isolated work unit",
-                  [(SCALE_LABELS[(method, "isolated")], SCALE_COLORS[(method, "isolated")],
-                    lookup[(method, "isolated")]) for method in UMMA_METHODS], "Total TFLOP/s")
-    scaling_panel(output, 482, 300, "Whole device",
-                  [(SCALE_LABELS[(method, "device_scale")], SCALE_COLORS[(method, "device_scale")],
-                    lookup[(method, "device_scale")]) for method in UMMA_METHODS], "Total TFLOP/s")
-    scaling_panel(output, 878, 300, "Mean SM clock in the same campaign",
-                  [(SCALE_LABELS[key], SCALE_COLORS[key], lookup[key]["clock"])
-                   for key in SCALE_LABELS], "MHz", baseline=1000.0)
-    scaling_panel(output, 1274, 300, "Scaling efficiency",
-                  [(label, SCALE_COLORS[(method, scale)], efficiency[method][field])
-                   for method, label, scale, field in (
-                       ("umma_1sm", "1-SM raw", "device_scale", "raw"),
-                       ("umma_1sm", "1-SM freq", "isolated", "frequency_normalized"),
-                       ("umma_2sm", "2-SM raw", "device_scale", "raw"),
-                       ("umma_2sm", "2-SM freq", "isolated", "frequency_normalized"))],
-                  "Whole-device / (units x isolated)", reference=1.0, decimals=2)
-    output.append(svg_text(34, 470,
-                           "Separate CUDA-event timings; raw efficiency also carries the DVFS "
-                           "difference that the frequency-normalized bars divide out.",
-                           font_size="11", fill="#64748b"))
-    return "\n".join([*output, "</svg>"]) + "\n"
-
-
-def write_csv(path, rows):
-    with path.open("w", newline="", encoding="utf-8") as destination:
-        writer = csv.DictWriter(destination, fieldnames=list(rows[0]), lineterminator="\n")
-        writer.writeheader()
+def precision_results(repetitions, validation):
+    """CuTe DSL throughput by shape and input format (precision_comparison.csv)."""
+    rows = []
+    for shape_index in sorted({record["shape_index"] for record in repetitions}):
+        for name in precision.FORMATS:
+            summary = repetition_summary(repetitions, validation, (shape_index, name, "cutedsl"))
+            first, types = summary["samples"][0], arithmetic("cutedsl", name)
+            peak = VENDOR_DENSE_TFLOPS[name]
+            rows.append({
+                "shape_index": shape_index, "shape_id": first["shape_id"],
+                **{key: first[key] for key in ("m", "n", "k", "l")}, "precision": name,
+                **{key: types[key] for key in ("input_dtype", "scale_dtype", "scale_block_elements",
+                                               "accumulator_dtype", "output_dtype")},
+                "mma_tile": "x".join(map(str, precision.TILE)),
+                "cluster_shape": "x".join(map(str, precision.CLUSTER)), "tma_store": "yes",
+                **{f"repetition_{record['repetition']}_tflops": record["tflops"]
+                   for record in summary["samples"]},
+                "mean_tflops": summary["throughput"]["mean"],
+                "stdev_tflops": summary["throughput"]["stdev_sample"],
+                "cv_percent": summary["throughput"]["cv_percent"],
+                "mean_kernel_time_us": summary["time"]["mean"],
+                "speedup_vs_bf16": "", "vendor_dense_peak_tflops": peak,
+                "percent_vendor_dense_peak": 100 * summary["throughput"]["mean"] / peak,
+                "correctness": summary["validation"]})
+        baseline = next(row for row in rows
+                        if row["shape_index"] == shape_index and row["precision"] == "bf16")
         for row in rows:
-            writer.writerow({key: f"{value:.6f}" if isinstance(value, float) else value
-                             for key, value in row.items()})
+            if row["shape_index"] == shape_index:
+                row["speedup_vs_bf16"] = row["mean_tflops"] / baseline["mean_tflops"]
+    return rows
+
+
+def precision_comparison_results(repetitions, validation, plans):
+    """CuTe DSL and cuBLASLt on the same operands (precision_cutedsl_vs_cublaslt.csv)."""
+    plans = {(plan["shape_index"], plan["precision"]): plan for plan in plans}
+    keys = sorted({(record["shape_index"], record["precision"]) for record in repetitions},
+                  key=lambda key: (key[0], precision.FORMATS.index(key[1])))
+    rows = []
+    for shape_index, name in keys:
+        summaries = {implementation: repetition_summary(repetitions, validation,
+                                                        (shape_index, name, implementation))
+                     for implementation in precision.IMPLEMENTATIONS}
+        plan = plans.get((shape_index, name), {})
+        # Matched: both validated against the same reference, FP32 output confirmed by
+        # cublasLtMatmulAlgoCheck, and one algorithm across every operand set.
+        matched = (all(summary["validation"] == "PASS" for summary in summaries.values()) and
+                   plan.get("algorithm", {}).get("check_status") == 0 and
+                   plan.get("same_algorithm_for_every_set", False) and
+                   plan.get("identification_algorithm_matches", False))
+        cublaslt_mean = summaries["cublaslt"]["throughput"]["mean"]
+        for implementation, summary in summaries.items():
+            first = summary["samples"][0]
+            if implementation == "cutedsl":
+                tile, cluster = precision.TILE, precision.CLUSTER
+                kernel = (f"{CUTE_KERNELS[name]}; MMA tile {tile[0]}x{tile[1]}; "
+                          f"cluster {cluster[0]}x{cluster[1]}; TMA store")
+            else:
+                algorithm = plan["algorithm"]
+                kernel_name = (" + ".join(plan.get("kernel_names", []))
+                               or "name unavailable in profiler")
+                kernel = (f"{kernel_name} (algorithm "
+                          f"{algorithm['algorithm_id']}; tile {algorithm['tile_id']}; stages "
+                          f"{algorithm['stages_id']}; cluster {algorithm['cluster_shape_id']})")
+            rows.append({
+                **{key: first[key] for key in ("shape_index", "shape_id", "m", "n", "k", "l",
+                                               "precision")},
+                "implementation": implementation,
+                "comparison": "matched" if matched else "not_matched",
+                **arithmetic(implementation, name), "kernel": kernel,
+                **{f"repetition_{record['repetition']}_tflops": record["tflops"]
+                   for record in summary["samples"]},
+                "mean_tflops": summary["throughput"]["mean"],
+                "stdev_tflops": summary["throughput"]["stdev_sample"],
+                "cv_percent": summary["throughput"]["cv_percent"],
+                "mean_kernel_time_us": summary["time"]["mean"],
+                "throughput_ratio_vs_cublaslt": summary["throughput"]["mean"] / cublaslt_mean,
+                "validation": summary["validation"], "bit_exact_outputs": summary["bit_exact"]})
+    return rows
+
+
+# GEMM traffic profile --------------------------------------------------------------------------
+
+def gemm_profile_results(directory, cache_state, gemm_summary):
+    """DRAM and L2 traffic of the six profiled launches beside their CUDA-event timing."""
+    reference = {(row["shape_id"], row["variant"]): row for row in read_csv(gemm_summary)}
+    rows = []
+    for case, shape, variant in profile_gemm.CASES:
+        text = (directory / f"{case}.csv").read_text(encoding="utf-8")
+        # The L2 read metric is exported only when its calibration passed.
+        l2_metric = profile_gemm.L2_READ_METRIC if profile_gemm.L2_READ_METRIC in \
+            text.partition("\n")[0] else None
+        metrics = (*profile_gemm.DRAM_METRICS, *profile_gemm.TIMING_METRICS,
+                   *((l2_metric,) if l2_metric else ()))
+        kernels, units = ncu_capture.parse_kernels(text, metrics)
+        if len(kernels) != 1:
+            raise ValueError(f"{case}: expected one profiled kernel, found {len(kernels)}")
+        values = kernels[0]["metrics"]
+        validation = json.loads((directory / f"{case}.worker.json").read_text(
+            encoding="utf-8"))["validation"]
+        m, n, k, batch = shape
+        compulsory = 2 * m * k * batch + 2 * n * k * batch  # BF16 A and B
+        output_bytes = 4 * m * n * batch  # FP32 D
+        read, write = values["dram__bytes_read.sum"], values["dram__bytes_write.sum"]
+        duration_ns = values["gpu__time_duration.sum"] * TIME_SCALE_NS[
+            units["gpu__time_duration.sum"].lower()]
+        clock_hz = values["sm__cycles_elapsed.avg.per_second"] * CLOCK_SCALE_HZ[
+            units["sm__cycles_elapsed.avg.per_second"].lower()]
+        l2_bytes = values[l2_metric] if l2_metric else None
+        timing = reference[(profile_gemm.shape_id(shape), variant)]
+        rows.append({
+            "shape_id": profile_gemm.shape_id(shape), "m": m, "n": n, "k": k, "l": batch,
+            "variant": variant, "method": "cutedsl" if variant == "persistent_2cta" else "cublaslt",
+            # A failed capture stops the profile, so every exported capture passed its checks.
+            "cache_state": cache_state, "status": "PASS", "kernel_name": kernels[0]["name"],
+            "validation": "PASS" if validation["first_launch"] == "PASS" and
+                                    validation["after_profiled_launch"] == "PASS" else "FAIL",
+            "dram_read_bytes": read, "dram_write_bytes": write,
+            "compulsory_read_bytes": compulsory, "dram_read_to_compulsory": read / compulsory,
+            "dram_read_excess_bytes": read - compulsory, "output_bytes": output_bytes,
+            "dram_write_to_output": write / output_bytes,
+            "l2_tma_read_bytes": "" if l2_bytes is None else l2_bytes,
+            # A hot-cache launch can have no DRAM reads; its L2/DRAM ratio is then undefined.
+            "l2_tma_read_to_dram_read": "" if l2_bytes is None or not read else l2_bytes / read,
+            "profiled_duration_us": duration_ns / 1e3,
+            "profiled_sm_clock_mhz": clock_hz / 1e6,
+            # Performance data remain the CUDA-event results of Experiment IV.
+            "cuda_event_mean_kernel_time_us": 1e3 * float(timing["mean_kernel_time_ms"]),
+            "cuda_event_mean_tflops": float(timing["mean_tflops"])})
+    return rows
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Summarize three GB300 campaigns.")
-    parser.add_argument("--campaign", action="append", type=Path, default=[])
-    parser.add_argument("--output", required=True, type=Path,
-                        help="new directory; an existing one is never reused")
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--output", type=Path, required=True,
+                        help="new directory for the summaries; an existing one is never reused")
+    parser.add_argument("--study", type=Path,
+                        help="a make final-study directory: regenerate all thirteen results")
+    parser.add_argument("--campaigns", type=Path, nargs=3, metavar="CAMPAIGN",
+                        help="three complete Experiment I–IV campaigns")
+    parser.add_argument("--precision", type=Path, help="an Experiment V run")
+    parser.add_argument("--gemm-profile", type=Path, help="a GEMM traffic profile")
+    parser.add_argument("--cache-state", choices=("hot", "cold"), help="the profile's cache state")
+    parser.add_argument("--gemm-summary", type=Path,
+                        help="the gemm_comparison.csv whose CUDA-event timing --gemm-profile "
+                             "reports; defaults to the one computed from --campaigns")
     args = parser.parse_args()
-    records, problems = check_final_campaigns(args.campaign)
-    if problems:
-        raise ValueError("; ".join(problems))
+    if args.study:
+        # The layout of make final-study, whose GEMM profile always uses hot caches.
+        args.campaigns = [args.study / f"campaign-{index}" for index in (1, 2, 3)]
+        args.precision = args.study / "precision"
+        args.gemm_profile, args.cache_state = args.study / "gemm-profile-hot", "hot"
+    if not (args.campaigns or args.precision or args.gemm_profile):
+        parser.error("name --study, --campaigns, --precision or --gemm-profile")
+    if args.gemm_profile and not (args.cache_state and (args.campaigns or args.gemm_summary)):
+        parser.error("--gemm-profile needs --cache-state and --campaigns or --gemm-summary")
 
-    output = args.output if args.output.is_absolute() else ROOT / args.output
+    output = args.output
     output.mkdir(parents=True, exist_ok=False)
-    processors = {"memory_paths": (memory_results, memory_figure),
-                  "umma_throughput": (umma_results, umma_figure),
-                  "umma_device_scaling": (scaling_results, scaling_figure),
-                  "gemm_comparison": (gemm_results, gemm_figure)}
-    files = []
-    for name, (analyze, figure) in processors.items():
-        rows, summary = analyze(records)
-        write_csv(output / f"{name}.csv", rows)
-        (output / f"{name}.svg").write_text(figure(summary), encoding="utf-8")
-        files += [f"{name}.csv", f"{name}.svg"]
-    # The manifest ties these summaries to their campaigns; the GEMM profile requires it.
-    manifest = {
-        "study": "final_campaign_analysis",
-        "created_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "command": [sys.executable, *sys.argv],
-        "gpu_uuid": records[0]["metadata"]["gpu"]["uuid"],
-        "source_commit": records[0]["metadata"]["environment"]["repository"]["commit"],
-        "campaigns": [{"campaign_id": record["metadata"]["campaign_id"],
-                       "path": str(record["path"]),
-                       "created_utc": record["metadata"]["created_utc"],
-                       "gpu": record["metadata"]["gpu"],
-                       "metadata_sha256": provenance.file_sha256(record["path"] / "metadata.json")}
-                      for record in records],
-        "analyzer_repository": provenance.repository_state(
-            ("analysis/analyze.py", "scripts/provenance.py")),
-        "outputs": {name: provenance.file_sha256(output / name) for name in files}}
-    (output / "analysis.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    print(f"analysis: COMPLETE {output}", file=sys.stderr)
+    if args.campaigns:
+        campaigns = load_campaigns(args.campaigns)
+        for name, results, figure in (
+                ("memory_paths", memory_results, figures.memory_figure),
+                ("umma_throughput", umma_results, figures.umma_figure),
+                ("umma_device_scaling", scaling_results, figures.scaling_figure),
+                ("gemm_comparison", gemm_results, figures.gemm_figure)):
+            rows, summary = results(campaigns)
+            write_csv(output / f"{name}.csv", rows)
+            (output / f"{name}.svg").write_text(figure(summary), encoding="utf-8")
+    if args.precision:
+        repetitions, validation, plans = load_precision(args.precision)
+        rows = precision_results(repetitions, validation)
+        write_csv(output / "precision_comparison.csv", rows)
+        (output / "precision_comparison.svg").write_text(figures.precision_figure(rows),
+                                                         encoding="utf-8")
+        rows = precision_comparison_results(repetitions, validation, plans)
+        write_csv(output / "precision_cutedsl_vs_cublaslt.csv", rows)
+        (output / "precision_cutedsl_vs_cublaslt.svg").write_text(
+            figures.precision_comparison_figure(rows, precision.WARMUP_ITERATIONS,
+                                                precision.ITERATIONS), encoding="utf-8")
+    if args.gemm_profile:
+        rows = gemm_profile_results(args.gemm_profile, args.cache_state,
+                                    args.gemm_summary or output / "gemm_comparison.csv")
+        # Unlike the other summaries, this table keeps Python's full float representation.
+        with (output / "gemm_profile.csv").open("w", newline="", encoding="utf-8") as destination:
+            writer = csv.DictWriter(destination, fieldnames=list(rows[0]), lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(rows)
+    record = {"created_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+              "campaigns": args.campaigns, "precision": args.precision,
+              "gemm_profile": args.gemm_profile, "cache_state": args.cache_state,
+              "gemm_summary": args.gemm_summary}
+    (output / "metadata.json").write_text(json.dumps(record, indent=2, default=str) + "\n",
+                                          encoding="utf-8")
+    print(f"analysis: complete {output}", file=sys.stderr)
+
 
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, KeyError, json.JSONDecodeError,
-            subprocess.SubprocessError) as error:
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         print(f"analysis: ERROR: {error}", file=sys.stderr)
         raise SystemExit(2)
