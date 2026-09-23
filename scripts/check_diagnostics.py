@@ -251,12 +251,24 @@ def check_precision(directory):
            for field in identical + (scales if row["precision"] == "nvfp4" else ())):
         problems.append("cuBLASLt operand bytes differ from the CuTe DSL operand bytes")
     plans = json.loads(files["raw/cublaslt_plans.json"].read_text(encoding="utf-8"))
-    if len(plans) != len(configurations) or not all(
-            plan.get("same_algorithm_for_every_set") and plan.get("identification_algorithm_matches")
-            and plan.get("kernels_per_launch", 0) >= 1 and plan["algorithm"]["check_status"] == 0
-            for plan in plans):
-        problems.append("a cuBLASLt plan changed algorithm, lacks its kernel name or failed "
-                        "the FP32-output check")
+    if len(plans) != len(configurations):
+        problems.append(f"raw/cublaslt_plans.json has {len(plans)} plans; expected "
+                        f"{len(configurations)}")
+    for plan in plans:
+        label = f"{plan.get('shape_id', '?')}/{plan.get('precision', '?')}"
+        if (not plan.get("same_algorithm_for_every_set") or
+                not plan.get("identification_algorithm_matches") or
+                plan.get("algorithm", {}).get("check_status") != 0):
+            problems.append(f"{label}: algorithm changed or FP32 check failed")
+        names = plan.get("kernel_names")
+        status = plan.get("kernel_identification_status")
+        count = plan.get("kernels_per_launch")
+        captured = (status == "CAPTURED" and isinstance(names, list) and bool(names)
+                    and all(isinstance(name, str) and name for name in names)
+                    and count == len(names))
+        unavailable = status == "UNAVAILABLE" and names == [] and count is None
+        if not (captured or unavailable):
+            problems.append(f"{label}: kernel identification fields are inconsistent")
     cute = read_rows(files["precision_comparison.csv"])
     if len(cute) != len(configurations) or any(row["correctness"] != "PASS" for row in cute):
         problems.append("precision_comparison.csv is incomplete or not validated")
