@@ -305,6 +305,19 @@ make precision-extended
 make check-diagnostics
 ```
 
+For an additional GEMM profile after the same warm-up launches as the campaigns, run
+application replay with no profiler cache flush. Save it under a separate ID so the existing
+cold-cache captures and published summaries remain available:
+
+```bash
+make gemm-profile PROFILE_CACHE=hot PROFILE_ID=gemm-profile-hot-final
+make check-diagnostics PROFILE_ID=gemm-profile-hot-final
+```
+
+The hot setting applies to the launch sequence; large operands need not fit in L2. Compare DRAM
+counters only between P2 and cuBLASLt captures made with the same cache setting. The original
+`make gemm-profile` continues to use cold-cache kernel replay.
+
 `make test` runs the focused checks of the diagnostic tooling inside the pinned image; it needs no
 GPU.
 
