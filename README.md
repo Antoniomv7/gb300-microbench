@@ -130,11 +130,19 @@ is left empty in the CSV (`null` in JSON) when no DRAM reads were recorded.
 | `results/` | Published CSV summaries and SVG figures |
 | `build/`, `runs/` | Generated binaries and evidence; excluded from Git |
 
-`results/` currently contains the earlier acquisition: three `final-unified` campaigns, a
-CuTe DSL precision run, and separate cuBLASLt precision and cold-cache GEMM diagnostics. These
-predate the current source-provenance checks. The earlier
-[GEMM and precision diagnostic archive](https://github.com/Antoniomv7/gb300-microbench/blob/ef5300c77509a0079f93dc1560eebfdf741cc3ee/evidence-gemm-precision.tar.gz)
-is preserved in the Git history. New studies write to `runs/`; update `results/` after auditing
-the new acquisition and retain its complete evidence archive alongside the thesis.
+`results/` contains the summaries and six SVG figures from the complete study
+`study-20260923T173150Z` on GPU
+`GPU-619f7fdc-5f98-8c37-fe89-0465d6130baf`, acquired from commit
+`6868f001b103c4cfd4a6d2019de7f310a2a18a04`. The three campaigns supply
+the four Experiment I–IV summaries; Experiment V supplies both the CuTe DSL
+precision summary and the 18-row within-format CuTe DSL/cuBLASLt comparison.
+`gemm_profile.csv` contains six hot-cache diagnostic captures, including DRAM
+and calibrated L2-to-TMA read bytes. The complete archive, including raw runs,
+profiler reports, validation records and the analysis manifest, accompanies
+the thesis as `supplementary/study-20260923T173150Z.tar.gz` (SHA-256
+`71533e13b16c2e85a784c6f6abea3ef95cf4193af17794dd59155ad1777e4101`).
+Extract the archive before using `scripts/check_diagnostics.py --study` on
+its study directory. Later studies write to `runs/` without overwriting
+these published results.
 
 BSD 3-Clause; see `LICENSE`.
