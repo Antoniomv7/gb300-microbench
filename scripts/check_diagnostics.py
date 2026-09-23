@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Check the GEMM profile and the extended precision comparison from their saved files.
+"""Check campaigns, Experiment V, GEMM profiles and whole final studies from their saved files.
 
 The checks are deliberately independent of the scripts' own verdicts: they recount captures
-and rows, re-read the exported Nsight Compute CSVs, and require every validation record to pass.
+and rows, re-read the exported Nsight Compute CSVs, require every validation record to pass, and
+reject runs made with modified tracked sources.
 """
 
 import argparse
@@ -16,8 +17,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import profile_gemm  # noqa: E402  (scripts/ is this script's directory)
+import final_study  # noqa: E402  (scripts/ is this script's directory)
+import ncu_capture  # noqa: E402
+import profile_gemm  # noqa: E402
 import provenance  # noqa: E402
+from analysis import analyze  # noqa: E402
 from precision_comparison import precision_comparison as precision  # noqa: E402
 
 IMPLEMENTATIONS = ("cutedsl", "cublaslt")
@@ -55,14 +59,14 @@ def check_provenance(environment):
     return problems
 
 
-def check_gemm_summary(index, captures):
+def check_gemm_summary(index, captures, reference=None):
     """The CUDA-event reference must be the manifest-backed analysis the profile recorded."""
     summary = index.get("gemm_summary", {})
     if not all(summary.get(key) for key in ("path", "sha256", "source_commit", "gpu_uuid",
                                             "campaigns")):
         return ["the CUDA-event reference (GEMM_SUMMARY) is not recorded"]
     problems = []
-    path = profile_gemm.resolve(Path(summary["path"]))
+    path = reference or profile_gemm.resolve(Path(summary["path"]))
     if not path.exists():
         problems.append(f"the CUDA-event reference {path} is missing")
     elif hashlib.sha256(path.read_bytes()).hexdigest() != summary["sha256"]:
@@ -77,7 +81,7 @@ def check_gemm_summary(index, captures):
     return problems
 
 
-def check_gemm_profile(directory):
+def check_gemm_profile(directory, reference=None):
     """Six passing captures, each with its files, one kernel in the NVTX range and its metrics."""
     index_path = directory / "index.json"
     if not index_path.exists():
@@ -110,7 +114,7 @@ def check_gemm_profile(directory):
             profile_gemm.L2_CALIBRATION_TOLERANCE:
         problems.append("the L2 read metric calibration is outside its tolerance")
 
-    problems += check_gemm_summary(index, captures)
+    problems += check_gemm_summary(index, captures, reference)
     for capture in captures:
         name = capture.get("case", "?")
         for kind, file in capture.get("files", {}).items():
@@ -124,7 +128,7 @@ def check_gemm_profile(directory):
         if not export.exists():
             continue
         try:
-            kernels, _ = profile_gemm.parse_kernels(export.read_text(encoding="utf-8"), metrics)
+            kernels, _ = ncu_capture.parse_kernels(export.read_text(encoding="utf-8"), metrics)
         except ValueError as error:
             problems.append(f"{name}: {error}")
             continue
@@ -265,23 +269,89 @@ def check_precision(directory):
     return problems
 
 
+def sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def read_json(path):
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def check_study(directory):
+    """A make final-study directory: its parts, and one GPU and one source commit throughout."""
+    campaigns = [directory / name for name in final_study.CAMPAIGNS]
+    records, problems = analyze.check_final_campaigns(campaigns)
+    analysis = directory / final_study.ANALYSIS
+    manifest = read_json(analysis / "analysis.json")
+    outputs = {f"{name}.{kind}" for name in analyze.EXPERIMENTS for kind in ("csv", "svg")}
+    if set(manifest.get("outputs", {})) != outputs or any(
+            not (analysis / name).exists() or sha256(analysis / name) != digest
+            for name, digest in manifest["outputs"].items()):
+        problems.append("analysis: the summaries are missing or differ from analysis.json")
+    # Identify the analyzed campaigns by content, so an extracted archive can be checked anywhere.
+    listed = [(campaign.get("campaign_id"), campaign.get("metadata_sha256"))
+              for campaign in manifest.get("campaigns", [])]
+    if listed != [(record["metadata"]["campaign_id"], sha256(record["path"] / "metadata.json"))
+                  for record in records if record]:
+        problems.append("analysis: analysis.json does not name this study's three campaigns")
+    problems += [f"analysis: {problem}" for problem in check_provenance(
+        {"repository": manifest.get("analyzer_repository", {}),
+         "gpu": {"uuid": manifest.get("gpu_uuid")}})]
+    problems += [f"precision: {problem}"
+                 for problem in check_precision(directory / final_study.PRECISION)]
+    profile = directory / final_study.PROFILE
+    problems += [f"gemm profile: {problem}" for problem in
+                 check_gemm_profile(profile, reference=analysis / "gemm_comparison.csv")]
+    index = read_json(profile / "index.json")
+    if index.get("cache_state") != "hot":
+        problems.append("gemm profile: the study's GEMM profile must use the hot cache state")
+
+    environments = [record["metadata"]["environment"] for record in records if record]
+    environments += [read_json(directory / final_study.PRECISION / "metadata.json")
+                     .get("environment", {}), index.get("environment", {})]
+    gpus = {environment.get("gpu", {}).get("uuid") for environment in environments}
+    commits = {environment.get("repository", {}).get("commit") for environment in environments}
+    gpus.add(manifest.get("gpu_uuid"))
+    commits |= {manifest.get("source_commit"),
+                manifest.get("analyzer_repository", {}).get("commit")}
+    if len(gpus) != 1 or len(commits) != 1:
+        problems.append(f"the study mixes GPUs {sorted(map(str, gpus))} or source commits "
+                        f"{sorted(map(str, commits))}")
+    return problems
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--gemm-profile", type=Path, required=True)
-    parser.add_argument("--precision", type=Path, required=True)
+    parser.add_argument("--campaign", action="append", type=Path, default=[],
+                        help="a campaign or single-experiment run (repeatable)")
+    parser.add_argument("--final-campaigns", nargs=3, type=Path, metavar="CAMPAIGN",
+                        help="the three complete campaigns of one study")
+    parser.add_argument("--precision", type=Path, help="an Experiment V run")
+    parser.add_argument("--gemm-profile", type=Path, help="a GEMM profile")
+    parser.add_argument("--study", type=Path, help="a make final-study directory")
     args = parser.parse_args()
-    checks = {"gemm-profile": (check_gemm_profile, args.gemm_profile),
-              "precision": (check_precision, args.precision)}
+    absolute = lambda path: path if path.is_absolute() else ROOT / path
+    checks = [("campaign", lambda path: analyze.check_campaign(path)[1], absolute(path))
+              for path in args.campaign]
+    if args.final_campaigns:
+        checks.append(("final campaigns", lambda paths: analyze.check_final_campaigns(paths)[1],
+                       [absolute(path) for path in args.final_campaigns]))
+    for name, check, target in (("precision", check_precision, args.precision),
+                                ("gemm-profile", check_gemm_profile, args.gemm_profile),
+                                ("study", check_study, args.study)):
+        if target:
+            checks.append((name, check, absolute(target)))
+    if not checks:
+        parser.error("name at least one run to check")
     failed = False
-    for name, (check, directory) in checks.items():
-        directory = directory if directory.is_absolute() else ROOT / directory
-        problems = check(directory)
+    for name, check, target in checks:
+        problems = check(target)
         failed |= bool(problems)
-        print(f"{name}: {'FAIL' if problems else 'PASS'} {directory}")
+        shown = " ".join(map(str, target)) if isinstance(target, list) else target
+        print(f"{name}: {'FAIL' if problems else 'PASS'} {shown}")
         for problem in problems:
             print(f"  - {problem}")
     raise SystemExit(1 if failed else 0)
-
 
 if __name__ == "__main__":
     main()

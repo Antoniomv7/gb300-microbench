@@ -151,7 +151,6 @@ __device__ __forceinline__ void fence_mbarrier_init_release_cluster() {
 struct CliConfig {
     bool help = false;
     std::string run_kind;
-    std::string campaign_kind = "none";
     int n = 0;
     int depth = 0;
     int64_t iterations = 0;
@@ -172,7 +171,6 @@ inline bool parse_cli(int argc, char** argv, CliConfig* config, std::string* err
         if (++index >= argc) { *error = "missing value for " + option; return false; }
         const std::string value = argv[index];
         if (option == "--run-kind") { config->run_kind = value; continue; }
-        if (option == "--campaign-kind") { config->campaign_kind = value; continue; }
         int64_t number = 0;
         if (!parse_int_arg(value, &number)) { *error = "invalid value for " + option; return false; }
         if (option == "--n") config->n = static_cast<int>(number);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture DRAM counters and the SM clock with Nsight Compute."""
+"""Capture DRAM counters and the SM clock with Nsight Compute, and read its raw-page exports."""
 
 import csv
 import io
@@ -8,12 +8,12 @@ import math
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MEMORY_METRICS = ("dram__bytes_read.sum", "dram__bytes_write.sum")
 UMMA_METRICS = ("sm__cycles_elapsed.avg.per_second", "gpu__time_duration.sum")
+EXPORT_TIMEOUT_S = 900
 
 # Profile representative memory cases and both peak-depth UMMA variants.
 MEMORY_PLAN = tuple(
@@ -31,40 +31,48 @@ UMMA_PLAN = tuple(
      "metrics": UMMA_METRICS}
     for index, method in enumerate(("umma_1sm", "umma_2sm"))
 )
+PLAN = (*MEMORY_PLAN, *UMMA_PLAN)
 
 
-def parse_ncu_csv(text, requested):
+def planned_cases(experiments):
+    """The captures that belong to the selected experiments; a full campaign has all eight."""
+    return tuple(case for case in PLAN if case["section"] in experiments)
+
+
+def ncu(*arguments):
+    return [os.environ.get("NCU_BINARY", "ncu"), *map(str, arguments)]
+
+
+def export_csv(report, destination):
+    """Export a report's raw page in base units and keep the export beside the report."""
+    completed = subprocess.run(
+        ncu("--import", report, "--csv", "--page", "raw", "--print-units", "base",
+            "--print-fp", "--print-kernel-base", "function"),
+        cwd=ROOT, text=True, capture_output=True, check=True, timeout=EXPORT_TIMEOUT_S)
+    Path(destination).write_text(completed.stdout, encoding="utf-8")
+    return completed.stdout
+
+
+def parse_kernels(text, metrics):
+    """Return one record per profiled kernel from a raw-page NCU CSV export, and the units."""
     rows = [row for row in csv.reader(io.StringIO(text)) if any(cell.strip() for cell in row)]
     if len(rows) < 2:
         raise ValueError("empty NCU export")
-    header = [field.strip().lstrip("\ufeff") for field in rows[0]]
-    values, units = {}, {}
-
-    def metric_name(value):
-        return next((name for name in requested if value == name or value.endswith("." + name)), None)
-
-    # NCU can export metrics as rows or as raw CSV columns.
-    if "Metric Name" in header:
-        name_column = header.index("Metric Name")
-        value_column = header.index("Metric Value")
-        unit_column = header.index("Metric Unit") if "Metric Unit" in header else None
-        for row in rows[1:]:
-            name = metric_name(row[name_column].strip())
-            if name:
-                values[name] = float(row[value_column].replace(",", ""))
-                units[name] = row[unit_column].strip() if unit_column is not None else ""
-    else:
-        if len(rows) < 3:
-            raise ValueError("NCU export has no metric values")
-        for index, value in enumerate(header):
-            name = metric_name(value)
-            if name:
-                values[name] = float(rows[-1][index].replace(",", ""))
-                units[name] = rows[1][index].strip()
-
-    if any(name not in values or not math.isfinite(values[name]) for name in requested):
-        raise ValueError("NCU did not provide every requested counter")
-    return values, units
+    header = [field.strip().lstrip("﻿") for field in rows[0]]
+    missing = [name for name in ("Kernel Name", *metrics) if name not in header]
+    if missing:
+        raise ValueError(f"NCU export lacks {missing}")
+    units = {metric: rows[1][header.index(metric)].strip() for metric in metrics}
+    nvtx = next((index for index, name in enumerate(header) if "Push/Pop_Range" in name), None)
+    kernels = []
+    for row in rows[2:]:
+        column = dict(zip(header, row))
+        kernels.append({
+            "name": column["Kernel Name"], "block_size": column.get("Block Size", ""),
+            "grid_size": column.get("Grid Size", ""),
+            "nvtx_ranges": row[nvtx].strip() if nvtx is not None else "",
+            "metrics": {metric: float(column[metric].replace(",", "")) for metric in metrics}})
+    return kernels, units
 
 
 def benchmark_command(case):
@@ -79,27 +87,24 @@ def benchmark_command(case):
 
 
 def capture_case(case, directory):
-    ncu = os.environ.get("NCU_BINARY", "ncu")
-    with tempfile.TemporaryDirectory(prefix="gb300-ncu-") as temporary:
-        report = Path(temporary) / "report"
-        collect = [ncu, "--clock-control", "none", "--pipeline-boost-state", "dynamic",
-                   "--cache-control", "none", "--kernel-name-base", "function",
-                   "--kernel-name", case["kernel_name"], "--launch-count", "1",
-                   "--devices", "0", "--replay-mode", "kernel", "--print-summary", "none",
-                   "--metrics", ",".join(case["metrics"]), "-o", str(report), "--",
-                   *benchmark_command(case)]
-        application = subprocess.run(collect, cwd=ROOT, text=True, capture_output=True,
-                                     timeout=900, check=True)
-        exported = subprocess.run(
-            [ncu, "--csv", "--page", "raw", "--print-units", "base", "--print-fp",
-             "--print-kernel-base", "function", "--import", str(report) + ".ncu-rep"],
-            cwd=ROOT, text=True, capture_output=True, timeout=900, check=True)
-
-    metrics, units = parse_ncu_csv(exported.stdout, case["metrics"])
-    output = directory / f"{case['case']}.csv"
-    output.write_text(exported.stdout, encoding="utf-8")
+    report = directory / case["case"]
+    collect = ncu("--clock-control", "none", "--pipeline-boost-state", "dynamic",
+                  "--cache-control", "none", "--kernel-name-base", "function",
+                  "--kernel-name", case["kernel_name"], "--launch-count", "1",
+                  "--devices", "0", "--replay-mode", "kernel", "--print-summary", "none",
+                  "--metrics", ",".join(case["metrics"]), "-o", report, "--",
+                  *benchmark_command(case))
+    application = subprocess.run(collect, cwd=ROOT, text=True, capture_output=True,
+                                 timeout=900, check=True)
+    kernels, units = parse_kernels(export_csv(f"{report}.ncu-rep", f"{report}.csv"),
+                                   case["metrics"])
+    if len(kernels) != 1 or not all(math.isfinite(value)
+                                    for value in kernels[0]["metrics"].values()):
+        raise ValueError(f"{case['case']}: NCU did not provide every requested counter once")
     record = {key: value for key, value in case.items() if key != "metrics"}
-    record.update({"status": "captured", "csv": output.name, "metrics": metrics, "units": units})
+    record.update({"status": "captured", "report": f"{case['case']}.ncu-rep",
+                   "csv": f"{case['case']}.csv", "metrics": kernels[0]["metrics"],
+                   "units": units})
     if case["section"] == "memory_paths":
         # Profiler messages may appear before the benchmark CSV header.
         lines = application.stdout.splitlines()
@@ -109,14 +114,13 @@ def capture_case(case, directory):
     return record
 
 
-def capture(campaign):
+def capture(campaign, cases):
     directory = Path(campaign) / "ncu"
     directory.mkdir(exist_ok=False)
-    cases = []
-    for case in (*MEMORY_PLAN, *UMMA_PLAN):
+    records = []
+    for case in cases:
         print(f"ncu: {case['case']}", file=sys.stderr, flush=True)
-        cases.append(capture_case(case, directory))
-    index = {"state": "COMPLETE", "captured_count": len(cases), "cases": cases}
+        records.append(capture_case(case, directory))
+    index = {"state": "COMPLETE", "captured_count": len(records), "cases": records}
     (directory / "index.json").write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
     return index
-

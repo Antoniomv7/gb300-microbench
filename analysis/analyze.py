@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Summarize three campaigns and generate four thesis figures."""
+"""Summarize three final campaigns and generate four thesis figures.
+
+check_campaign and check_final_campaigns are also the completeness gate of
+scripts/check_diagnostics.py, for single-experiment runs and for the three campaigns of a study.
+"""
 
 import argparse
 import csv
@@ -21,12 +25,14 @@ from scripts import ncu_capture, provenance  # noqa: E402
 
 METHODS = ("ldgsts", "tma")
 UMMA_METHODS = ("umma_1sm", "umma_2sm")
-# Complete final campaigns: 18 memory and 24 UMMA configurations, 4 scaling configurations,
+# Final parameters: 18 memory and 24 UMMA configurations, 4 scaling configurations,
 # 30 repetitions each, and 5 GEMM shapes with 4 candidates.
 EXPECTED_ROWS = {"memory_paths": 540, "umma_throughput": 720, "umma_device_scaling": 120,
                  "gemm_comparison": 20}
 EXPERIMENTS = tuple(EXPECTED_ROWS)
-NCU_CASES = {case["case"] for case in (*ncu_capture.MEMORY_PLAN, *ncu_capture.UMMA_PLAN)}
+# Six memory and two UMMA captures; the scaling and GEMM experiments have none.
+NCU_CASES = {experiment: {case["case"] for case in ncu_capture.planned_cases((experiment,))}
+             for experiment in EXPERIMENTS}
 COLORS = {"ldgsts": "#2563eb", "tma": "#d97706",
           "umma_1sm": "#2563eb", "umma_2sm": "#d97706"}
 GEMM_COLORS = {"nonpersistent_1cta": "#2563eb", "persistent_1cta": "#7c3aed",
@@ -58,38 +64,101 @@ def read_csv(path):
         return list(csv.DictReader(source))
 
 
-def read_campaign(path):
-    """Load one campaign, rejecting it unless it is a complete, validated final acquisition."""
-    path = path.resolve()
-    metadata = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
-    problems = [] if metadata.get("kind") == "final" else ["not a final campaign"]
+def check_ncu(path, profile, experiments):
+    """The run's own Nsight Compute captures: each report and export present and consistent."""
+    expected = set().union(*(NCU_CASES[experiment] for experiment in experiments))
+    cases = profile.get("cases", [])
+    names = sorted(case.get("case") for case in cases)
+    if names != sorted(expected) or (expected and profile.get("state") != "COMPLETE"):
+        return [f"expected the Nsight Compute captures {sorted(expected)}, found {names}"]
+    problems = []
+    for case in cases:
+        files = [path / "ncu" / case.get(key, "missing") for key in ("report", "csv")]
+        if not all(file.exists() for file in files):
+            problems.append(f"{case['case']}: the NCU report or its export is missing")
+            continue
+        plan = next(item for item in ncu_capture.PLAN if item["case"] == case["case"])
+        try:
+            kernels, _ = ncu_capture.parse_kernels(files[1].read_text(encoding="utf-8"),
+                                                   plan["metrics"])
+        except ValueError as error:
+            problems.append(f"{case['case']}: {error}")
+            continue
+        if len(kernels) != 1 or kernels[0]["metrics"] != case.get("metrics"):
+            problems.append(f"{case['case']}: ncu/index.json disagrees with the NCU export")
+    return problems
+
+
+def check_campaign(path):
+    """Load a campaign or single-experiment run and list every reason it is not valid.
+
+    Its metadata names its experiments. Each needs its complete, validated rows; device scaling
+    needs its clock telemetry, and the memory and UMMA experiments their NCU captures.
+    """
+    path = Path(path).resolve()
+    metadata_path = path / "metadata.json"
+    if not metadata_path.exists():
+        return None, [f"{metadata_path} is missing; the run did not complete"]
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    problems = [] if metadata.get("state") == "COMPLETE" and metadata.get("kind") == "final" \
+        else ["not a completed run with the final parameters"]
     repository = metadata.get("environment", {}).get("repository")
-    if not repository or not repository.get("commit"):
-        problems.append("no source commit recorded")
+    if not repository or not repository.get("commit") or not metadata.get("gpu", {}).get("uuid"):
+        problems.append("the GPU or the source commit was not recorded")
     elif provenance.tracked_changes(repository):
         problems.append("acquired with modified tracked files "
                         f"{provenance.tracked_changes(repository)}")
-    if metadata.get("telemetry", {}).get("state") != "COMPLETE":
-        problems.append("the device-scaling clock telemetry is incomplete")
-    datasets = {}
-    for experiment, expected in EXPECTED_ROWS.items():
-        rows = read_csv(path / "raw" / f"{experiment}.csv")
-        if len(rows) != expected or any(row.get("correctness") not in ("OK", "PASS")
-                                         for row in rows):
-            problems.append(f"{experiment}: expected {expected} validated rows, found {len(rows)}")
-        datasets[experiment] = rows
-    telemetry = read_csv(path / "raw/umma_device_scaling_telemetry.csv")
-    profile_path = path / "ncu/index.json"
-    profile = json.loads(profile_path.read_text(encoding="utf-8")) if profile_path.exists() else {}
-    cases = [case.get("case") for case in profile.get("cases", [])]
-    if profile.get("state") != "COMPLETE" or len(cases) != len(NCU_CASES) or \
-            set(cases) != NCU_CASES:
-        problems.append(f"expected the {len(NCU_CASES)} Nsight Compute captures, "
-                        f"found {len(cases)}")
+    experiments = metadata.get("experiments", [])
+    if not experiments or not set(experiments) <= set(EXPERIMENTS):
+        return None, problems + [f"unknown experiments {experiments}"]
+    record = {"path": path, "metadata": metadata, "data": {}, "telemetry": [], "profile": {}}
+    for experiment in experiments:
+        dataset = path / "raw" / f"{experiment}.csv"
+        rows = read_csv(dataset) if dataset.exists() else []
+        if len(rows) != EXPECTED_ROWS[experiment] or any(
+                row.get("correctness") not in ("OK", "PASS") for row in rows):
+            problems.append(f"{experiment}: expected {EXPECTED_ROWS[experiment]} validated rows, "
+                            f"found {len(rows)}")
+        record["data"][experiment] = rows
+    if "umma_device_scaling" in experiments:
+        telemetry = path / "raw/umma_device_scaling_telemetry.csv"
+        record["telemetry"] = read_csv(telemetry) if telemetry.exists() else []
+        try:
+            if metadata.get("telemetry", {}).get("state") != "COMPLETE":
+                raise ValueError("not recorded as complete")
+            clock_campaigns(record)
+        except (KeyError, ValueError) as error:
+            problems.append(f"device-scaling clock telemetry: {error}")
+    index = path / "ncu/index.json"
+    record["profile"] = json.loads(index.read_text(encoding="utf-8")) if index.exists() else {}
+    problems += check_ncu(path, record["profile"], experiments)
+    return record, problems
+
+
+def check_final_campaigns(paths):
+    """Three complete, distinct campaigns on one GPU from one source commit."""
+    records, problems = [], []
+    if len(paths) != 3:
+        problems.append(f"exactly three campaigns are required, found {len(paths)}")
+    for path in paths:
+        record, found = check_campaign(path)
+        if record and record["metadata"]["experiments"] != list(EXPERIMENTS):
+            found.append("not a complete campaign; it ran only "
+                         + ", ".join(record["metadata"]["experiments"]))
+        problems += [f"{Path(path).name}: {problem}" for problem in found]
+        records.append(record)
     if problems:
-        raise ValueError(f"{path.name}: " + "; ".join(problems))
-    return {"path": path, "metadata": metadata, "data": datasets, "telemetry": telemetry,
-            "profile": profile}
+        return records, problems
+    if len({record["path"] for record in records}) != 3 or \
+            len({record["metadata"]["campaign_id"] for record in records}) != 3:
+        problems.append("the three campaigns must be distinct")
+    if len({record["metadata"]["gpu"]["uuid"] for record in records}) != 1:
+        problems.append("the campaigns ran on different GPUs")
+    repositories = [record["metadata"]["environment"]["repository"] for record in records]
+    if len({json.dumps([repository["commit"], repository["source_sha256"]], sort_keys=True)
+            for repository in repositories}) != 1:
+        problems.append("the campaigns ran different source commits or source files")
+    return records, problems
 
 
 def grouped_medians(rows, fields, value):
@@ -525,22 +594,15 @@ def sha256(path):
 def main():
     parser = argparse.ArgumentParser(description="Summarize three GB300 campaigns.")
     parser.add_argument("--campaign", action="append", type=Path, default=[])
-    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--output", required=True, type=Path,
+                        help="new directory; an existing one is never reused")
     args = parser.parse_args()
-    if len(args.campaign) != 3:
-        parser.error("exactly three final campaigns are required")
-    records = [read_campaign(path) for path in args.campaign]
-    if len({record["metadata"]["campaign_id"] for record in records}) != 3:
-        raise ValueError("the three campaigns must be distinct")
-    if len({record["metadata"]["gpu"]["uuid"] for record in records}) != 1:
-        raise ValueError("all campaigns must use the same GPU")
-    repositories = [record["metadata"]["environment"]["repository"] for record in records]
-    if len({json.dumps([repository["commit"], repository["source_sha256"]], sort_keys=True)
-            for repository in repositories}) != 1:
-        raise ValueError("all campaigns must use the same source commit and source files")
+    records, problems = check_final_campaigns(args.campaign)
+    if problems:
+        raise ValueError("; ".join(problems))
 
     output = args.output if args.output.is_absolute() else ROOT / args.output
-    output.mkdir(parents=True, exist_ok=True)
+    output.mkdir(parents=True, exist_ok=False)
     processors = {"memory_paths": (memory_results, memory_figure),
                   "umma_throughput": (umma_results, umma_figure),
                   "umma_device_scaling": (scaling_results, scaling_figure),
@@ -557,7 +619,7 @@ def main():
         "created_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "command": [sys.executable, *sys.argv],
         "gpu_uuid": records[0]["metadata"]["gpu"]["uuid"],
-        "source_commit": repositories[0]["commit"],
+        "source_commit": records[0]["metadata"]["environment"]["repository"]["commit"],
         "campaigns": [{"campaign_id": record["metadata"]["campaign_id"],
                        "path": str(record["path"]),
                        "created_utc": record["metadata"]["created_utc"],
@@ -568,7 +630,6 @@ def main():
         "outputs": {name: sha256(output / name) for name in files}}
     (output / "analysis.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"analysis: COMPLETE {output}", file=sys.stderr)
-
 
 if __name__ == "__main__":
     try:

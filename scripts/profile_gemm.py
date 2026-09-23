@@ -13,10 +13,8 @@ import csv
 import ctypes
 import datetime as dt
 import hashlib
-import io
 import json
 import math
-import os
 import re
 import subprocess
 import sys
@@ -29,10 +27,11 @@ import ncu_capture  # noqa: E402  (scripts/ is this script's directory)
 import provenance  # noqa: E402
 import run_campaign  # noqa: E402
 from gemm_comparison import gemm_comparison as gemm  # noqa: E402
+from ncu_capture import export_csv, ncu, parse_kernels  # noqa: E402
 
 SHAPES = ((4096, 4096, 4096, 1), (8192, 8192, 8192, 1), (32768, 512, 4096, 1))
 VARIANTS = ("persistent_2cta", "heuristic_first_supported")
-CAMPAIGN_WARMUP = run_campaign.GEMM_PROTOCOL["final"]["warmup"]
+CAMPAIGN_WARMUP = run_campaign.GEMM["warmup_iterations"]
 NVTX_RANGE = "gb300_gemm_profile"
 DRAM_METRICS = ("dram__bytes_read.sum", "dram__bytes_write.sum")
 TIMING_METRICS = ("gpu__time_duration.sum", "sm__cycles_elapsed.avg.per_second")
@@ -138,10 +137,6 @@ def worker(shape, variant, result_path):
     Path(result_path).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
 
-def ncu(*arguments):
-    return [os.environ.get("NCU_BINARY", "ncu"), *map(str, arguments)]
-
-
 class Log:
     """Mirror progress messages to stderr and the study's execution log."""
 
@@ -162,37 +157,6 @@ def run_logged(command, log_path):
         completed = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                    text=True, timeout=CAPTURE_TIMEOUT_S)
     return completed.returncode
-
-
-def export_csv(report, destination):
-    completed = subprocess.run(
-        ncu("--import", report, "--csv", "--page", "raw", "--print-units", "base",
-            "--print-fp", "--print-kernel-base", "function"),
-        cwd=ROOT, text=True, capture_output=True, check=True, timeout=600)
-    destination.write_text(completed.stdout, encoding="utf-8")
-    return completed.stdout
-
-
-def parse_kernels(text, metrics):
-    """Return one record per profiled kernel from a raw-page NCU CSV export."""
-    rows = [row for row in csv.reader(io.StringIO(text)) if any(cell.strip() for cell in row)]
-    if not rows:
-        raise ValueError("empty NCU export")
-    header = [field.strip().lstrip("﻿") for field in rows[0]]
-    missing = [name for name in ("Kernel Name", *metrics) if name not in header]
-    if missing:
-        raise ValueError(f"NCU export lacks {missing}")
-    units = {metric: rows[1][header.index(metric)].strip() for metric in metrics}
-    nvtx = next((index for index, name in enumerate(header) if "Push/Pop_Range" in name), None)
-    kernels = []
-    for row in rows[2:]:
-        column = dict(zip(header, row))
-        kernels.append({
-            "name": column["Kernel Name"], "block_size": column.get("Block Size", ""),
-            "grid_size": column.get("Grid Size", ""),
-            "nvtx_ranges": row[nvtx].strip() if nvtx is not None else "",
-            "metrics": {metric: float(column[metric].replace(",", "")) for metric in metrics}})
-    return kernels, units
 
 
 def query_metric(base):
