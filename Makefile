@@ -10,6 +10,7 @@ FINAL_CAMPAIGNS ?=
 ANALYSIS_OUT ?= results
 ANALYSIS_ONLY ?=
 PROFILE_ID ?= gemm-profile-final
+PROFILE_CACHE ?= cold
 PRECISION_ID ?= precision-extended-final
 ARCH ?= $(CUDA_ARCH)
 VIRTUAL_ARCH := compute_$(patsubst sm_%,%,$(ARCH))
@@ -103,7 +104,8 @@ precision:
 		--output "$(ANALYSIS_OUT)"
 
 gemm-profile: build
-	scripts/run_gpu.sh python3 scripts/profile_gemm.py --output "$(CAMPAIGN_ROOT)/$(PROFILE_ID)"
+	scripts/run_gpu.sh python3 scripts/profile_gemm.py --cache-state "$(PROFILE_CACHE)" \
+		--output "$(CAMPAIGN_ROOT)/$(PROFILE_ID)"
 
 precision-extended: build
 	scripts/run_gpu.sh python3 precision_comparison/precision_comparison.py --with-cublaslt \
