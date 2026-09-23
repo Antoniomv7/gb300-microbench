@@ -145,4 +145,104 @@ Extract the archive before using `scripts/check_diagnostics.py --study` on
 its study directory. Later studies write to `runs/` without overwriting
 these published results.
 
+## Published results and findings
+
+The figures below use the published CSVs from the study above. Throughput values are means of the
+three final campaigns for Experiments I–IV and of three timed repetitions for Experiment V. The
+Nsight Compute traffic captures are separate diagnostics, not timing measurements. Results describe
+this GPU, workload and configuration grid; they are not architectural peak specifications.
+
+### I. HBM-to-shared-memory paths
+
+![Effective transfer rate for LDGSTS and TMA](results/memory_paths.svg)
+
+LDGSTS has the higher effective rate in **8 of 9** matched stage/in-flight-byte configurations.
+The highest measured means are **7,024 GB/s** for LDGSTS and **6,964 GB/s** for TMA (both at four
+stages and 64 KiB in flight). At two stages and 64 KiB, TMA is marginally higher: 6,954 versus
+6,943 GB/s. Increasing the bytes in flight helps both paths in this grid, while eight stages can
+reduce throughput substantially. The plotted rate is useful bytes divided by kernel time; it is
+not a direct DRAM-bandwidth counter or a prediction of GEMM speed.
+
+Source: [`results/memory_paths.csv`](results/memory_paths.csv).
+
+### II–III. UMMA instruction throughput and device scaling
+
+![Isolated BF16 UMMA throughput](results/umma_throughput.svg)
+
+At `N=256`, depth 256, the isolated 1-SM kernel reaches **8,101 FLOP/cycle/SM** (modeled
+**16.372 TFLOP/s/SM** using the measured clock); the 2-SM kernel reaches **8,028
+FLOP/cycle/SM**, or **1.982×** the total throughput of the 1-SM kernel. The per-cycle figures
+come from validated operation counts and `%clock64` cycles.
+
+![BF16 UMMA scaling to 148 SMs](results/umma_device_scaling.svg)
+
+| Execution | Active SMs | Mean throughput | Scaling efficiency | Clock-normalized efficiency |
+|---|---:|---:|---:|---:|
+| 1-SM work units | 148 | 2,103.7 TFLOP/s | 91.7% | 96.9% |
+| 2-SM work units | 148 | 2,119.7 TFLOP/s | 93.3% | 98.1% |
+
+The 2-SM work-unit configuration delivers about **0.8%** more device throughput in this test.
+The gap between raw and clock-normalized efficiency shows why a fixed-clock extrapolation from
+an isolated SM overstates the scaling loss. The sampled clocks and power in the CSV describe the
+timed runs; power samples are indicative telemetry, not a calibrated energy-efficiency comparison.
+
+Sources: [`results/umma_throughput.csv`](results/umma_throughput.csv) and
+[`results/umma_device_scaling.csv`](results/umma_device_scaling.csv).
+
+### IV. BF16 GEMM implementation and shape
+
+![BF16 CuTe DSL variants versus cuBLASLt](results/gemm_comparison.svg)
+
+| GEMM shape (M × N × K) | Persistent 2-CTA CuTe DSL | cuBLASLt | CuTe DSL / cuBLASLt |
+|---|---:|---:|---:|
+| 4096 × 4096 × 4096 | 1,679.7 TFLOP/s | 1,754.6 TFLOP/s | 95.7% |
+| 8192 × 8192 × 8192 | 1,450.5 TFLOP/s | 2,111.2 TFLOP/s | 68.7% |
+| 16384 × 512 × 4096 | 812.7 TFLOP/s | 1,435.6 TFLOP/s | 56.6% |
+| 32768 × 512 × 4096 | 756.9 TFLOP/s | 1,509.8 TFLOP/s | 50.1% |
+| 512 × 16384 × 4096 | 1,269.8 TFLOP/s | 1,498.9 TFLOP/s | 84.7% |
+
+Persistent 2-CTA is the fastest of the three tested CuTe DSL BF16 variants on all five shapes,
+but its proximity to cuBLASLt varies strongly with matrix shape. This comparison tests specific
+implementations and the selected cuBLASLt algorithms, not a general ceiling for CuTe DSL.
+
+Source: [`results/gemm_comparison.csv`](results/gemm_comparison.csv).
+
+### V. BF16, FP8 and NVFP4 GEMM
+
+![CuTe DSL throughput by input precision](results/precision_comparison.svg)
+
+| GEMM shape (M × N × K) | BF16 CuTe DSL | FP8 CuTe DSL | NVFP4 CuTe DSL |
+|---|---:|---:|---:|
+| 4096 × 4096 × 4096 | 1,685.0 | 2,938.0 (1.74×) | 4,032.9 (2.39×) |
+| 8192 × 8192 × 8192 | 1,459.0 | 3,122.9 (2.14×) | 5,568.8 (3.82×) |
+| 32768 × 512 × 4096 | 757.6 | 1,721.1 (2.27×) | 2,992.8 (3.95×) |
+
+Throughputs are in TFLOP/s; parentheses show speedup over BF16 for the same CuTe DSL shape.
+Lower precision increases measured throughput, but the gain depends on shape and is below the
+ratio of the nominal dense arithmetic peaks for several cases. NVFP4 uses block scales; its
+operand representation and numerical error differ from BF16 and FP8. All reported outputs pass
+validation against the FP32 reference of the corresponding dequantized operands.
+
+![Matched CuTe DSL and cuBLASLt comparisons by precision](results/precision_cutedsl_vs_cublaslt.svg)
+
+In the matched-operand comparison, CuTe DSL reaches **50.0–95.3%** of cuBLASLt throughput in
+BF16, **64.4–92.2%** in FP8 and **73.2–84.2%** in NVFP4 across these three shapes. The two
+implementations consume the same operand bytes for each shape and format, including NVFP4 scales;
+every timed repetition is checked for numerical correctness.
+
+Sources: [`results/precision_comparison.csv`](results/precision_comparison.csv) and
+[`results/precision_cutedsl_vs_cublaslt.csv`](results/precision_cutedsl_vs_cublaslt.csv).
+
+### Hot-cache BF16 GEMM traffic diagnostic
+
+In the six separately profiled launches, the persistent 2-CTA CuTe DSL variant records more DRAM
+read bytes than cuBLASLt at 8192 × 8192 × 8192 (**3.35 versus 1.16 GB**) and at
+32768 × 512 × 4096 (**1.08 versus 0.28 GB**). The calibrated L2-to-SM TMA counter also records
+more bytes for CuTe DSL at those shapes. These observations are consistent with the larger
+measured performance gaps, but do not establish which operand was reread or prove that traffic
+alone caused the gap. Hot-cache DRAM reads may be smaller than the combined A/B operand size.
+
+Source: [`results/gemm_profile.csv`](results/gemm_profile.csv); capture and cache-state details
+are given in [GEMM traffic profiling](#gemm-traffic-profiling).
+
 BSD 3-Clause; see `LICENSE`.
