@@ -89,5 +89,3 @@ class ClockSampler:
             for index, sample in enumerate(self.samples):
                 writer.writerow([index, f"{sample[0]:.6f}", f"{sample[1]:.6f}", sample[2],
                                  f"{sample[3]:.1f}", f"{sample[4]:.2f}", f"{sample[5]:.1f}"])
-        return len(self.samples)
-

@@ -1,6 +1,5 @@
 build/
 runs/
-/evidence-*.tar.gz
 __pycache__/
 *.py[cod]
 .DS_Store

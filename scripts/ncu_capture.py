@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Capture DRAM counters and the SM clock with Nsight Compute, and read its raw-page exports."""
+"""Nsight Compute captures of Experiments I and II, and the raw-page export parser.
+
+The parser is shared with scripts/profile_gemm.py and analysis/analyze.py.
+"""
 
 import csv
 import io
 import json
 import math
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -40,7 +42,7 @@ def planned_cases(experiments):
 
 
 def ncu(*arguments):
-    return [os.environ.get("NCU_BINARY", "ncu"), *map(str, arguments)]
+    return ["ncu", *map(str, arguments)]
 
 
 def export_csv(report, destination):
@@ -68,8 +70,7 @@ def parse_kernels(text, metrics):
     for row in rows[2:]:
         column = dict(zip(header, row))
         kernels.append({
-            "name": column["Kernel Name"], "block_size": column.get("Block Size", ""),
-            "grid_size": column.get("Grid Size", ""),
+            "name": column["Kernel Name"],
             "nvtx_ranges": row[nvtx].strip() if nvtx is not None else "",
             "metrics": {metric: float(column[metric].replace(",", "")) for metric in metrics}})
     return kernels, units
@@ -102,9 +103,8 @@ def capture_case(case, directory):
                                     for value in kernels[0]["metrics"].values()):
         raise ValueError(f"{case['case']}: NCU did not provide every requested counter once")
     record = {key: value for key, value in case.items() if key != "metrics"}
-    record.update({"status": "captured", "report": f"{case['case']}.ncu-rep",
-                   "csv": f"{case['case']}.csv", "metrics": kernels[0]["metrics"],
-                   "units": units})
+    record.update({"report": f"{case['case']}.ncu-rep", "csv": f"{case['case']}.csv",
+                   "metrics": kernels[0]["metrics"], "units": units})
     if case["section"] == "memory_paths":
         # Profiler messages may appear before the benchmark CSV header.
         lines = application.stdout.splitlines()
@@ -115,12 +115,12 @@ def capture_case(case, directory):
 
 
 def capture(campaign, cases):
+    """Capture each case once, after all timing, and index the counters for the analysis."""
     directory = Path(campaign) / "ncu"
     directory.mkdir(exist_ok=False)
     records = []
     for case in cases:
         print(f"ncu: {case['case']}", file=sys.stderr, flush=True)
         records.append(capture_case(case, directory))
-    index = {"state": "COMPLETE", "captured_count": len(records), "cases": records}
-    (directory / "index.json").write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
-    return index
+    (directory / "index.json").write_text(json.dumps({"cases": records}, indent=2) + "\n",
+                                          encoding="utf-8")

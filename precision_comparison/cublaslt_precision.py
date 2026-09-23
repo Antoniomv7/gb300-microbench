@@ -363,7 +363,6 @@ class Baseline:
         self.warmup, self.iterations = warmup, iterations
         self.bridge = Bridge()
         self.repetitions, self.validation, self.operands, self.plans = [], [], [], []
-        self.limitations = []
 
     @contextlib.contextmanager
     def capture(self, module, precision):
@@ -420,11 +419,7 @@ class Baseline:
                     "tflops": flops / cute_samples[repetition - 1] / 1e6,
                     "validation": cute["status"], "bit_exact": cute["bit_exact"]})
             output = torch.full((m, n), float("nan"), dtype=torch.float32, device="cuda")
-            try:
-                plan = self.bridge.plan(precision, encoded, output, stream.cuda_stream)
-            except RuntimeError as error:
-                self.limitations.append({**context, "operand_set": name, "reason": str(error)})
-                return
+            plan = self.bridge.plan(precision, encoded, output, stream.cuda_stream)
             try:
                 plans.append({"operand_set": name, **plan.info.record()})
                 plan()
