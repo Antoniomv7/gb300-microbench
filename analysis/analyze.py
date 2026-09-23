@@ -8,7 +8,6 @@ scripts/check_diagnostics.py, for single-experiment runs and for the three campa
 import argparse
 import csv
 import datetime as dt
-import hashlib
 import html
 import json
 import math
@@ -587,10 +586,6 @@ def write_csv(path, rows):
                              for key, value in row.items()})
 
 
-def sha256(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def main():
     parser = argparse.ArgumentParser(description="Summarize three GB300 campaigns.")
     parser.add_argument("--campaign", action="append", type=Path, default=[])
@@ -624,10 +619,11 @@ def main():
                        "path": str(record["path"]),
                        "created_utc": record["metadata"]["created_utc"],
                        "gpu": record["metadata"]["gpu"],
-                       "metadata_sha256": sha256(record["path"] / "metadata.json")}
+                       "metadata_sha256": provenance.file_sha256(record["path"] / "metadata.json")}
                       for record in records],
-        "analyzer_repository": provenance.repository_state(("analysis/analyze.py",)),
-        "outputs": {name: sha256(output / name) for name in files}}
+        "analyzer_repository": provenance.repository_state(
+            ("analysis/analyze.py", "scripts/provenance.py")),
+        "outputs": {name: provenance.file_sha256(output / name) for name in files}}
     (output / "analysis.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"analysis: COMPLETE {output}", file=sys.stderr)
 

@@ -196,6 +196,9 @@ def calibrate_l2_metric(directory, log, ncu_settings):
         return record
     kernels, units = parse_kernels(export_csv(case.with_suffix(".ncu-rep"),
                                               case.with_suffix(".csv")), metrics)
+    if len(kernels) != 1:
+        record["reason"] = f"calibration captured {len(kernels)} kernels; expected one"
+        return record
     # Profiler messages can interleave with the benchmark's own CSV lines.
     lines = case.with_suffix(".log").read_text(encoding="utf-8").splitlines()
     rows = [line for line in lines if line.startswith(("method,", "tma,"))]
@@ -206,7 +209,7 @@ def calibrate_l2_metric(directory, log, ncu_settings):
                    "l2_read_to_useful": ratio,
                    "dram_read_to_useful": values["dram__bytes_read.sum"] / useful,
                    "tolerance": L2_CALIBRATION_TOLERANCE})
-    if len(kernels) == 1 and abs(ratio - 1) <= L2_CALIBRATION_TOLERANCE:
+    if abs(ratio - 1) <= L2_CALIBRATION_TOLERANCE:
         record["collected"] = True
     else:
         record["reason"] = f"calibration ratio {ratio:.6f} outside ±{L2_CALIBRATION_TOLERANCE}"
@@ -228,7 +231,7 @@ def read_gemm_summary(path, gpu):
         raise ValueError(f"{path} must be the gemm_comparison.csv of a make analyze output "
                          "directory, next to its analysis.json")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = provenance.file_sha256(path)
     if manifest.get("outputs", {}).get(path.name) != digest:
         raise ValueError(f"{path} differs from the file recorded in {manifest_path}")
     if manifest.get("gpu_uuid") != gpu["uuid"]:
@@ -242,7 +245,7 @@ def read_gemm_summary(path, gpu):
         raise ValueError(f"{path} lacks the rows {missing}")
     return {"path": str(path.relative_to(ROOT) if path.is_relative_to(ROOT) else path),
             "sha256": digest, "manifest": "analysis.json",
-            "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+            "manifest_sha256": provenance.file_sha256(manifest_path),
             "source_commit": manifest["source_commit"], "gpu_uuid": manifest["gpu_uuid"],
             "campaigns": [campaign["campaign_id"] for campaign in manifest["campaigns"]],
             "rows": {f"{shape_id(shape)}/{variant}": {
@@ -275,7 +278,8 @@ def traffic(shape, metrics, units):
               "profiled_dram_read_tb_per_s": read / duration_ns / 1e3}
     if L2_READ_METRIC in metrics:
         result["l2_tma_read_bytes"] = metrics[L2_READ_METRIC]
-        result["l2_tma_read_to_dram_read"] = metrics[L2_READ_METRIC] / read
+        # A hot-cache launch can have no DRAM reads; its L2/DRAM ratio is then undefined.
+        result["l2_tma_read_to_dram_read"] = metrics[L2_READ_METRIC] / read if read else None
     return result
 
 
@@ -329,6 +333,8 @@ def capture(directory, index, shape, variant, metrics, log, ncu_settings, refere
                 record["problems"].append("the export has no kernel name")
             if any(not math.isfinite(value) or value < 0 for value in kernel["metrics"].values()):
                 record["problems"].append("a requested metric is missing or negative")
+            elif any(kernel["metrics"][metric] <= 0 for metric in TIMING_METRICS):
+                record["problems"].append("the profiled duration and SM clock must be positive")
             else:
                 record["traffic"] = traffic(shape, kernel["metrics"], units)
     else:

@@ -41,7 +41,6 @@ constexpr int kRequestedAlgorithms = 32;
 thread_local char g_error[256] = {};
 
 enum Format : int32_t { kBFloat16 = 0, kFloat8E4M3 = 1, kNVFloat4 = 2 };
-enum Output : int32_t { kOutputFloat32 = 0, kOutputBFloat16 = 1 };
 
 int fail(const char* operation, cublasStatus_t status) {
     std::snprintf(g_error, sizeof(g_error), "%s: cuBLAS status %d",
@@ -116,7 +115,7 @@ const char* gbp_last_error() { return g_error; }
 
 size_t gbp_cublaslt_version() { return cublasLtGetVersion(); }
 
-int gbp_plan_create(int32_t format, int32_t output, int64_t m, int64_t n, int64_t k,
+int gbp_plan_create(int32_t format, int64_t m, int64_t n, int64_t k,
                     const void* a, const void* b, const void* a_scale, const void* b_scale,
                     void* d, void* stream, uint64_t workspace_limit, void** result,
                     GbpPlanInfo* info) {
@@ -124,7 +123,6 @@ int gbp_plan_create(int32_t format, int32_t output, int64_t m, int64_t n, int64_
         return fail("invalid cuBLASLt plan arguments");
     if (format != kBFloat16 && format != kFloat8E4M3 && format != kNVFloat4)
         return fail("unknown input format");
-    if (output != kOutputFloat32 && output != kOutputBFloat16) return fail("unknown output type");
     if (format == kNVFloat4 && (!a_scale || !b_scale))
         return fail("NVFP4 requires both block-scale tensors");
     std::memset(info, 0, sizeof(*info));
@@ -139,7 +137,6 @@ int gbp_plan_create(int32_t format, int32_t output, int64_t m, int64_t n, int64_
     const cudaDataType_t input = format == kBFloat16      ? CUDA_R_16BF
                                  : format == kFloat8E4M3 ? CUDA_R_8F_E4M3
                                                          : CUDA_R_4F_E2M1;
-    const cudaDataType_t output_type = output == kOutputFloat32 ? CUDA_R_32F : CUDA_R_16BF;
     CHECK_LT(cublasLtCreate(&plan->handle));
     CHECK_LT(cublasLtMatmulDescCreate(&plan->operation, CUBLAS_COMPUTE_32F, CUDA_R_32F));
     const int32_t transa = CUBLAS_OP_T;
@@ -177,7 +174,7 @@ int gbp_plan_create(int32_t format, int32_t output, int64_t m, int64_t n, int64_
     // Column-major K×N and K×M operands with leading dimension K; D is column-major N×M.
     CHECK_LT(cublasLtMatrixLayoutCreate(&plan->a_layout, input, k, n, k));
     CHECK_LT(cublasLtMatrixLayoutCreate(&plan->b_layout, input, k, m, k));
-    CHECK_LT(cublasLtMatrixLayoutCreate(&plan->d_layout, output_type, n, m, n));
+    CHECK_LT(cublasLtMatrixLayoutCreate(&plan->d_layout, CUDA_R_32F, n, m, n));
 
     Preference preference;
     CHECK_LT(cublasLtMatmulPreferenceCreate(&preference.value));
@@ -231,7 +228,7 @@ int gbp_plan_create(int32_t format, int32_t output, int64_t m, int64_t n, int64_
         config(plan->algorithm, CUBLASLT_ALGO_CONFIG_CLUSTER_SHAPE_ID, &info->cluster_shape_id))
         return 1;
 
-    // Confirm independently that the selected algorithm accepts this exact output type.
+    // Confirm independently that the selected algorithm accepts FP32 output.
     cublasLtMatmulHeuristicResult_t check = {};
     const cublasStatus_t status = cublasLtMatmulAlgoCheck(
         plan->handle, plan->operation, plan->a_layout, plan->b_layout, plan->d_layout,

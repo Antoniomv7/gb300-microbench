@@ -61,7 +61,7 @@ image:
 build:
 	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
 		-v "$(CURDIR):/workspace" -w /workspace "$(IMAGE_TAG)" \
-		make compile ARCH="$(CUDA_ARCH)"
+		make compile ARCH="$(ARCH)"
 
 compile: $(BINARIES) $(BRIDGE) $(PRECISION_BRIDGE)
 
@@ -101,7 +101,7 @@ precision: build
 		--output "$(RUNS)/$$id"; \
 	$(CHECK) --precision "$(RUNS)/$$id"
 
-final-study: build
+final-study:
 	python3 scripts/final_study.py --runs "$(RUNS)"
 
 campaign: build

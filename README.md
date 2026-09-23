@@ -1,149 +1,140 @@
-# GB300 Blackwell Microbenchmarks
+# NVIDIA B300 GEMM Microbenchmarks
 
-Five experiments on one NVIDIA B300 SXM6 AC, a supplementary Nsight Compute profile of the BF16
-GEMM gap, and the checks that reject incomplete or invalid acquisitions.
+Five experiments on one NVIDIA B300 SXM6 AC: memory transfers, Tensor Core throughput, device
+scaling, GEMM implementations and numerical formats. CUDA/PTX microbenchmarks characterize the
+hardware mechanisms; pinned CUTLASS CuTe DSL examples and cuBLASLt provide the GEMM comparisons.
 
 ## Experiments
 
-| # | Purpose | Command | Output in `runs/` |
+| # | Purpose | Command | Main CSV in the run directory |
 |---|---|---|---|
-| I | LDGSTS versus TMA effective transfer rate | `make exp1-memory` | `exp1-memory-<UTC>/`: `raw/memory_paths.csv`, 6 NCU DRAM captures |
-| II | Isolated 1-SM versus 2-SM BF16 UMMA throughput | `make exp2-umma` | `exp2-umma-<UTC>/`: `raw/umma_throughput.csv`, 2 NCU SM-clock captures |
-| III | Whole-device BF16 UMMA scaling | `make exp3-scaling` | `exp3-scaling-<UTC>/`: `raw/umma_device_scaling.csv` and its clock telemetry |
-| IV | BF16 CuTe DSL variants versus cuBLASLt | `make exp4-gemm` | `exp4-gemm-<UTC>/`: `raw/gemm_comparison.csv` |
-| V | BF16, FP8 and NVFP4 with CuTe DSL and cuBLASLt | `make precision` | `precision-<UTC>/`: 9-row `precision_comparison.csv`, 18-row `precision_cutedsl_vs_cublaslt.csv`, raw records |
+| I | LDGSTS versus TMA effective transfer rate | `make exp1-memory` | `raw/memory_paths.csv` |
+| II | Isolated 1-SM versus 2-SM BF16 UMMA throughput | `make exp2-umma` | `raw/umma_throughput.csv` |
+| III | Whole-device BF16 UMMA scaling | `make exp3-scaling` | `raw/umma_device_scaling.csv` |
+| IV | BF16 CuTe DSL variants versus cuBLASLt | `make exp4-gemm` | `raw/gemm_comparison.csv` |
+| V | BF16, FP8 and NVFP4 with CuTe DSL and cuBLASLt | `make precision` | `precision_comparison.csv`, `precision_cutedsl_vs_cublaslt.csv` |
 
-Every run directory also holds `metadata.json` (or `index.json`), with the GPU identity, source
-commit, source-file hashes and software versions. `analysis/analyze.py` reduces Experiments I–IV
-from three complete campaigns: the median within each campaign, then the mean, sample standard
-deviation and coefficient of variation across the three. Experiment V repeats each format and shape
-three times in one run. All statistics are descriptive.
+Experiments I and II also collect six DRAM and two SM-clock Nsight Compute captures, respectively.
+Experiment III samples the SM clock, power and temperature every 50 ms during timing. Experiment V
+records operands, validation, repetitions and selected cuBLASLt algorithms in `raw/`. A separate
+GEMM profile collects DRAM and L2 traffic for two BF16 implementations on three shapes.
 
-## Running
+## Run the complete study
 
-The pinned CUDA image, CUTLASS commit and Python packages are in `VERSIONS.env`. Build once:
+The host needs an NVIDIA driver, Docker with GPU support, Git, Make and Python 3. The CUDA image
+digest, CUTLASS commit and Python package versions are pinned in `VERSIONS.env`.
+
+Build the container once, or after changing the pinned environment:
 
 ```bash
 make image
-make build
 ```
 
-`scripts/run_gpu.sh` resolves `BLACKWELL_GPU_INDEX` to a GPU UUID, refuses a GPU that already runs
-compute processes, and exposes only that GPU to the container. One experiment at a time:
+Select an idle GPU and run the study:
 
 ```bash
 export BLACKWELL_GPU_INDEX=6
-make exp1-memory
-make exp2-umma
+make final-study
+```
+
+`scripts/run_gpu.sh` resolves the index to a GPU UUID, checks for existing compute processes and
+exposes that GPU as device 0 inside the container. The study requires committed sources and creates
+a new `runs/study-<UTC>/` directory. It compiles the binaries once, then:
+
+1. runs Experiments I–IV three times into `campaign-1/`, `campaign-2/` and `campaign-3/`;
+2. checks and aggregates those campaigns into `analysis/`;
+3. runs Experiment V, including its three repetitions per format and shape, into `precision/`;
+4. profiles the six BF16 GEMM cases with hot caches into `gemm-profile-hot/`;
+5. checks the complete study and creates `runs/study-<UTC>.tar.gz`.
+
+The archive contains the raw data, summaries, SVG figures, metadata, Nsight Compute reports and
+per-step logs. The final message prints its path, SHA-256, GPU UUID and source commit. Execution
+stops at the first failure and preserves the run directory for diagnosis. Existing directories
+are never overwritten.
+
+## Run experiments individually
+
+After selecting the GPU, execute any command from the experiment table. For example:
+
+```bash
 make exp3-scaling
-make exp4-gemm
 make precision
 ```
 
-Each target uses the final measurement parameters, writes a new directory, and finishes by checking
-its own saved result with `scripts/check_diagnostics.py`. It runs only its own experiment and only
-that experiment's profiling:
+Each command compiles as needed, uses the study's measurement parameters, creates its own
+timestamped directory under `runs/` and checks the saved data. Individual runs are useful for
+inspection; aggregation requires three complete I–IV campaigns.
 
-- `exp1-memory`: the six Nsight Compute DRAM captures of the memory configurations.
-- `exp2-umma`: the two Nsight Compute SM-clock captures of the peak-depth UMMA configurations.
-- `exp3-scaling`: no Nsight Compute; `nvidia-smi` samples the SM clock, power and temperature every
-  50 ms during the timed launches.
-- `exp4-gemm`: none.
-- `precision`: no Nsight Compute; after all timing, the PyTorch profiler names the kernel behind each
-  selected cuBLASLt algorithm.
-
-Individual runs are for inspecting one experiment. `make analyze` accepts only complete campaigns,
-so they never enter the three-campaign statistics.
-
-The complete acquisition is one command:
+For a standalone campaign, analysis or GEMM profile:
 
 ```bash
-BLACKWELL_GPU_INDEX=6 make final-study
+make campaign CAMPAIGN_ID=campaign-a
+# Repeat with campaign-b and campaign-c before analysis.
+make analyze FINAL_CAMPAIGNS="campaign-a campaign-b campaign-c" ANALYSIS_OUT=runs/analysis-abc
+make gemm-profile PROFILE_CACHE=hot GEMM_SUMMARY=runs/analysis-abc/gemm_comparison.csv
 ```
 
-It runs Experiments I–IV three times, Experiment V once and the supplementary hot-cache GEMM
-profile. It refuses to start from a tree with modified tracked files, because every run records its
-source commit. It creates `runs/study-<UTC>/` and, stopping at the first failure:
+`make help` lists the targets. `RUNS` sets the output parent; `CAMPAIGN_ID`, `PRECISION_ID` and
+`PROFILE_ID` optionally name new run directories. An extracted study can be checked with:
 
-1. runs three complete campaigns, `campaign-1` to `campaign-3`, each with Experiments I–IV, the
-   UMMA clock telemetry and all eight Nsight Compute captures;
-2. checks that the three are complete, share one GPU and one source commit, and hold their expected
-   rows, telemetry and captures;
-3. analyzes only those three campaigns into `analysis/`;
-4. runs Experiment V once through `make precision` into `precision/`;
-5. captures the six supplementary GEMM profiles with the hot cache into `gemm-profile-hot/`, using
-   `analysis/gemm_comparison.csv` as their CUDA-event reference;
-6. checks the whole study, then writes the evidence archive `runs/study-<UTC>.tar.gz`: the three
-   campaigns, the analysis, the precision data, the Nsight Compute reports, the per-step logs in
-   `logs/` and `study.json`. It prints the archive's path, the GPU UUID and the source commit.
+```bash
+python3 scripts/check_diagnostics.py --study /path/to/study-YYYYMMDDTHHMMSSZ
+```
 
-A failed study keeps its directory for diagnosis and is never reused or archived. Each step is an
-ordinary command that can be rerun alone: `make campaign`, `make analyze`, `make precision`,
-`make gemm-profile` and `python3 scripts/check_diagnostics.py`; `make help` lists their inputs, and
-`check_diagnostics.py --study` also audits an extracted archive. Nothing writes to `results/`; new
-summaries replace the published ones only by hand, after the study has been audited.
+## Measurement and validation
 
-## Validation
+- **Timing.** CUDA events measure Experiments I, III, IV and V; `%clock64` measures Experiment II.
+  Validation and warm-up precede timing. Clocks are unlocked and repeated launches reuse their
+  operands. Profiling runs after timing and its durations are reported as diagnostics.
+- **Experiments I–IV.** Every configuration validates its output before timing is retained. Complete
+  campaigns contain 540 memory, 720 isolated UMMA, 120 scaling and 20 GEMM rows. Device scaling
+  verifies simultaneous residency on every planned SM; telemetry spans the timed block and has at
+  least three samples per configuration. GEMM candidates share operands and an IEEE-FP32 reference.
+- **Experiment V.** Both implementations use the same operand bytes, including NVFP4 block scales,
+  with FP32 accumulation and output. Every timed repetition's output is checked against an
+  IEEE-FP32 product of the dequantized operands. cuBLASLt keeps one algorithm across operand sets
+  and passes `cublasLtMatmulAlgoCheck`. Each shape and format has three repetitions of five warm-up
+  and twenty timed launches. A negative control verifies the numerical tolerance check.
+- **Kernel identification.** After Experiment V's timing, one CPU/CUDA PyTorch profiler capture
+  attempts to name each cuBLASLt kernel. Empty traces are recorded as `UNAVAILABLE`, with an
+  unknown launch count; algorithm identity and numerical validation remain required.
+- **Aggregation.** Experiments I–IV use the median within each campaign, followed by the mean,
+  sample standard deviation and coefficient of variation across three distinct campaigns. The
+  campaigns must share one GPU, source commit and source-file hashes. `analysis.json` identifies
+  the inputs and hashes every output. Statistics are descriptive.
 
-A run is rejected, rather than summarized, when any of these fails:
+## GEMM traffic profiling
 
-- **Experiments I–IV.** Every benchmark validates its numerical result before its timing is kept,
-  and a dataset is written only when all its rows validated: 540 memory, 720 isolated UMMA, 120
-  device-scaling and 20 GEMM rows. Whole-device UMMA requires simultaneous residency on every
-  planned SM. The clock telemetry must span the whole timed scaling block, agree with the host
-  clock to within 1 s, and hold at least 3 samples inside each configuration's timed launches.
-  GEMM candidates share operands and must match an untimed IEEE-FP32 reference. Each Nsight Compute
-  capture must hold one kernel with every requested counter, and its report and export are kept.
-- **Analysis.** Exactly three distinct complete campaigns on one GPU, from one source commit with
-  identical source hashes and no modified tracked files. `analysis.json` records the campaigns and
-  the SHA-256 of every output.
-- **Experiment V.** Each CuTe DSL output, including every timed repetition's, and each cuBLASLt
-  output before and after timing must match an IEEE-FP32 product of the exactly represented,
-  dequantized operands. cuBLASLt consumes the same bytes as CuTe DSL (data and NVFP4 scales), uses
-  FP32 compute and output confirmed by `cublasLtMatmulAlgoCheck`, and keeps one algorithm across
-  operand sets. A negative control confirms that the tolerance check rejects a mismatch. The
-  protocol is fixed at three repetitions of 5 warm-up and 20 timed launches.
-- **GEMM profile.** `GEMM_SUMMARY` must be the `gemm_comparison.csv` of a `make analyze` output
-  whose `analysis.json` names the profiled GPU and records that file's SHA-256, with all six
-  shape/variant rows; the published `results/` summary is refused. Each capture validates before
-  and after the profiled launch, holds exactly one kernel inside the NVTX range, and shares operands
-  with the other implementation of its shape. The L2→SM metric is used only after a TMA stream
-  reproduces its useful bytes to within 0.1%.
+`make final-study` uses **hot-cache application replay**: every replay pass repeats operand setup,
+validation and two warm-up launches, then profiles one NVTX-selected launch with
+`--cache-control none`. `PROFILE_CACHE=cold` is also available for an isolated diagnostic using
+kernel replay and `--cache-control all`.
 
-## Timed results and Nsight Compute diagnostics
+Each capture validates before and after the selected launch and keeps its `.ncu-rep`, CSV export
+and worker metadata. The two implementations share operands. The L2-to-SM TMA byte counter is
+included only if a known TMA stream reproduces its useful bytes within 0.1%.
 
-Throughput comes only from timed launches without a profiler attached: CUDA events for Experiments
-I, III, IV and V, and `%clock64` for Experiment II. Clocks are not locked, and the caches are hot
-after the warm-up launches.
+The CUDA-event reference comes from the supplied analysis directory and must match its manifest
+and GPU. The cache state is recorded in every summary row. `compulsory_read_bytes` denotes the
+combined A/B operand size: hot-cache DRAM reads can be smaller, including zero. The L2/DRAM ratio
+is left empty in the CSV (`null` in JSON) when no DRAM reads were recorded.
 
-Nsight Compute always runs in separate processes after the timing. The campaign captures report DRAM
-bytes read per useful byte beside the Experiment I rates, and the SM clock that expresses the
-strongest Experiment II configuration in TFLOP/s/SM. The GEMM profile's durations and byte counts
-are diagnostics beside the CUDA-event reference it records, never replacements for it:
+## Repository layout and results
 
-- **Hot cache** (`PROFILE_CACHE=hot`, used by `final-study`): application replay with
-  `--cache-control none`. Every replay pass reruns the operand setup, validation and the campaigns'
-  two warm-up launches before the one NVTX-selected launch.
-- **Cold cache** (`PROFILE_CACHE=cold`): kernel replay with `--cache-control all`, which flushes the
-  caches before the profiled launch. The published `results/gemm_profile.csv` is a cold profile.
+| Path | Contents |
+|---|---|
+| `memory_paths/`, `umma_throughput/` | CUDA/PTX microbenchmarks and shared launch/validation code |
+| `gemm_comparison/`, `precision_comparison/` | GEMM drivers and their cuBLASLt bridges |
+| `scripts/` | Acquisition, profiling, telemetry, provenance and saved-data checks |
+| `analysis/` | Campaign aggregation and figures |
+| `results/` | Published CSV summaries and SVG figures |
+| `build/`, `runs/` | Generated binaries and evidence; excluded from Git |
 
-Each profile directory holds one cache state, recorded in `index.json` and in every row of
-`gemm_profile.csv`; compare DRAM counters only between captures made with the same state.
-
-## Published results
-
-`results/` holds the previous acquisition, made before runs recorded their source commit:
-
-- `memory_paths`, `umma_throughput`, `umma_device_scaling` and `gemm_comparison` (CSV and SVG):
-  final campaigns `final-unified-1` to `-3` on `GPU-619f7fdc-5f98-8c37-fe89-0465d6130baf`,
-  published in commit `ade92ad`.
-- `precision_comparison` (CSV and SVG): the former CuTe DSL-only precision run, last updated in
-  commit `ade92ad`.
-- `precision_cutedsl_vs_cublaslt` (CSV and SVG) and `gemm_profile.csv`: separate runs on the same
-  GPU, published in commit `5b5a95c`. `gemm_profile.csv` is the cold-cache profile; its CUDA-event
-  columns come from the `gemm_comparison.csv` above.
-
-These files are kept as historical evidence and are not results of a new study. Their raw runs
-predate the provenance fields that `make analyze` and `scripts/check_diagnostics.py` now require.
+`results/` currently contains the earlier acquisition: three `final-unified` campaigns, a
+CuTe DSL precision run, and separate cuBLASLt precision and cold-cache GEMM diagnostics. These
+predate the current source-provenance checks. The earlier
+[GEMM and precision diagnostic archive](https://github.com/Antoniomv7/gb300-microbench/blob/ef5300c77509a0079f93dc1560eebfdf741cc3ee/evidence-gemm-precision.tar.gz)
+is preserved in the Git history. New studies write to `runs/`; update `results/` after auditing
+the new acquisition and retain its complete evidence archive alongside the thesis.
 
 BSD 3-Clause; see `LICENSE`.

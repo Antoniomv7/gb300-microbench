@@ -22,6 +22,15 @@ def command_output(command, cwd=ROOT):
     return completed.stdout.strip()
 
 
+def file_sha256(path):
+    """Hash a source file, result or archive without loading it all into memory."""
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as source:
+        for block in iter(lambda: source.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def gpu_identity():
     # run_gpu.sh exposes one physical GPU to the container and names it here.
     gpu = os.environ.get("BLACKWELL_GPU_UUID", "0")
@@ -35,8 +44,7 @@ def repository_state(sources=()):
     """Identify the commit, uncommitted changes and the exact source files behind a run."""
     return {"commit": command_output(["git", "rev-parse", "HEAD"]),
             "status": command_output(["git", "status", "--porcelain"]).splitlines(),
-            "source_sha256": {source: hashlib.sha256((ROOT / source).read_bytes()).hexdigest()
-                              for source in sources}}
+            "source_sha256": {source: file_sha256(ROOT / source) for source in sources}}
 
 
 def tracked_changes(repository):

@@ -7,8 +7,6 @@ reject runs made with modified tracked sources.
 """
 
 import argparse
-import csv
-import hashlib
 import json
 import math
 import sys
@@ -33,11 +31,6 @@ COMPARISON_REQUIRED = (
     "repetition_3_tflops", "mean_tflops", "stdev_tflops", "cv_percent", "mean_kernel_time_us",
     "throughput_ratio_vs_cublaslt", "validation")
 FP32_OUTPUTS = {"cutedsl": "Float32", "cublaslt": "CUDA_R_32F"}
-
-
-def read_rows(path):
-    with path.open(newline="", encoding="utf-8") as source:
-        return list(csv.DictReader(source))
 
 
 def positive(value):
@@ -69,7 +62,7 @@ def check_gemm_summary(index, captures, reference=None):
     path = reference or profile_gemm.resolve(Path(summary["path"]))
     if not path.exists():
         problems.append(f"the CUDA-event reference {path} is missing")
-    elif hashlib.sha256(path.read_bytes()).hexdigest() != summary["sha256"]:
+    elif provenance.file_sha256(path) != summary["sha256"]:
         problems.append(f"the CUDA-event reference {path} changed after profiling")
     if summary["gpu_uuid"] != index.get("environment", {}).get("gpu", {}).get("uuid"):
         problems.append("the CUDA-event reference was measured on a different GPU")
@@ -142,11 +135,12 @@ def check_gemm_profile(directory, reference=None):
                 kernel["metrics"] != capture.get("metrics"):
             problems.append(f"{name}: index.json disagrees with the exported CSV")
         if not all(math.isfinite(value) and value >= 0 for value in kernel["metrics"].values()) \
-                or not kernel["metrics"].get("dram__bytes_read.sum", 0) > 0:
-            problems.append(f"{name}: a metric is missing, negative or zero")
+                or not all(positive(kernel["metrics"].get(metric))
+                           for metric in profile_gemm.TIMING_METRICS):
+            problems.append(f"{name}: invalid counter, duration or SM clock")
 
     summary = directory / "gemm_profile.csv"
-    rows = read_rows(summary) if summary.exists() else []
+    rows = analyze.read_csv(summary) if summary.exists() else []
     if len(rows) != len(expected) or any(row["status"] != "PASS" or row["validation"] != "PASS"
                                          or not row["kernel_name"] for row in rows):
         problems.append(f"{summary.name} does not hold {len(expected)} passing rows")
@@ -182,7 +176,7 @@ def check_precision(directory):
     if missing:
         return problems + [f"missing files: {missing}"]
 
-    comparison = read_rows(files["precision_cutedsl_vs_cublaslt.csv"])
+    comparison = analyze.read_csv(files["precision_cutedsl_vs_cublaslt.csv"])
     keys = [(row["shape_id"], row["precision"], row["implementation"]) for row in comparison]
     expected = {(shape, name, implementation) for shape, name in configurations
                 for implementation in IMPLEMENTATIONS}
@@ -209,7 +203,7 @@ def check_precision(directory):
                 abs(float(row["throughput_ratio_vs_cublaslt"]) - means[key] / baseline) > 1e-5:
             problems.append(f"{label}: the ratio does not match the two means")
 
-    repetitions = read_rows(files["raw/repetitions.csv"])
+    repetitions = analyze.read_csv(files["raw/repetitions.csv"])
     found = [(row["shape_id"], row["precision"], row["implementation"], row["repetition"])
              for row in repetitions]
     wanted = {(*key, str(index)) for key in expected for index in range(1, REPETITIONS + 1)}
@@ -223,7 +217,7 @@ def check_precision(directory):
             problems.append(f"{'/'.join(key)}: repetition is invalid or disagrees with the "
                             "comparison CSV")
 
-    validation = read_rows(files["raw/validation.csv"])
+    validation = analyze.read_csv(files["raw/validation.csv"])
     failures = [row for row in validation if row["status"] != "PASS"]
     if failures:
         problems.append(f"{len(failures)} validation records failed")
@@ -240,7 +234,7 @@ def check_precision(directory):
             problems.append(f"{shape}/{name}: {len(needed - stages)} validation records "
                             "are missing")
 
-    operands = read_rows(files["raw/operands.csv"])
+    operands = analyze.read_csv(files["raw/operands.csv"])
     if len(operands) != len(OPERAND_SETS) * len(configurations) or \
             any(row["represented_exactly"] != "True" for row in operands):
         problems.append("raw/operands.csv is incomplete or an operand was not represented exactly")
@@ -269,7 +263,7 @@ def check_precision(directory):
         unavailable = status == "UNAVAILABLE" and names == [] and count is None
         if not (captured or unavailable):
             problems.append(f"{label}: kernel identification fields are inconsistent")
-    cute = read_rows(files["precision_comparison.csv"])
+    cute = analyze.read_csv(files["precision_comparison.csv"])
     if len(cute) != len(configurations) or any(row["correctness"] != "PASS" for row in cute):
         problems.append("precision_comparison.csv is incomplete or not validated")
     for row in cute:
@@ -279,10 +273,6 @@ def check_precision(directory):
             problems.append(f"{row['shape_id']}/{row['precision']}: CuTe DSL repetitions differ "
                             "between the two CSVs")
     return problems
-
-
-def sha256(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def read_json(path):
@@ -297,13 +287,14 @@ def check_study(directory):
     manifest = read_json(analysis / "analysis.json")
     outputs = {f"{name}.{kind}" for name in analyze.EXPERIMENTS for kind in ("csv", "svg")}
     if set(manifest.get("outputs", {})) != outputs or any(
-            not (analysis / name).exists() or sha256(analysis / name) != digest
+            not (analysis / name).exists() or provenance.file_sha256(analysis / name) != digest
             for name, digest in manifest["outputs"].items()):
         problems.append("analysis: the summaries are missing or differ from analysis.json")
     # Identify the analyzed campaigns by content, so an extracted archive can be checked anywhere.
     listed = [(campaign.get("campaign_id"), campaign.get("metadata_sha256"))
               for campaign in manifest.get("campaigns", [])]
-    if listed != [(record["metadata"]["campaign_id"], sha256(record["path"] / "metadata.json"))
+    if listed != [(record["metadata"]["campaign_id"],
+                   provenance.file_sha256(record["path"] / "metadata.json"))
                   for record in records if record]:
         problems.append("analysis: analysis.json does not name this study's three campaigns")
     problems += [f"analysis: {problem}" for problem in check_provenance(

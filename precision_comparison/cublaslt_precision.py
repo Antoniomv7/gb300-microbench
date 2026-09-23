@@ -21,7 +21,6 @@ BRIDGE_LIBRARY = ROOT / "build/precision_comparison/libcublaslt_precision_bridge
 WORKSPACE_LIMIT_BYTES = 64 * 1024 * 1024  # the campaign cuBLASLt baseline's limit
 REQUESTED_ALGORITHMS = 32
 FORMAT_CODES = {"bf16": 0, "fp8": 1, "nvfp4": 2}
-OUTPUT_FLOAT32 = 0
 SCALE_BLOCK = 16
 # Tolerances of the pinned examples' own checks (dense_gemm_persistent and the SM103 NVFP4 kernel).
 TOLERANCES = {"bf16": (0.1, 1e-3), "fp8": (0.1, 1e-3), "nvfp4": (0.1, 1e-2)}
@@ -99,7 +98,7 @@ class Bridge:
         self.library.gbp_last_error.restype = ctypes.c_char_p
         self.library.gbp_cublaslt_version.restype = ctypes.c_size_t
         self.library.gbp_plan_create.argtypes = [
-            ctypes.c_int32, ctypes.c_int32, *[ctypes.c_int64] * 3, *[ctypes.c_void_p] * 6,
+            ctypes.c_int32, *[ctypes.c_int64] * 3, *[ctypes.c_void_p] * 6,
             ctypes.c_uint64, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(PlanInfo)]
         self.library.gbp_plan_execute.argtypes = [ctypes.c_void_p]
         self.library.gbp_plan_destroy.argtypes = [ctypes.c_void_p]
@@ -113,7 +112,7 @@ class Bridge:
         pointer = lambda name: encoded[name].data_ptr() if encoded.get(name) is not None else None
         handle, info = ctypes.c_void_p(), PlanInfo()
         if self.library.gbp_plan_create(
-                FORMAT_CODES[precision], OUTPUT_FLOAT32, m, n, k, pointer("a"), pointer("b"),
+                FORMAT_CODES[precision], m, n, k, pointer("a"), pointer("b"),
                 pointer("a_scale"), pointer("b_scale"), output.data_ptr(), stream,
                 WORKSPACE_LIMIT_BYTES, ctypes.byref(handle), ctypes.byref(info)):
             raise RuntimeError(f"cuBLASLt {precision} FP32-output plan: "

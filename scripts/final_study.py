@@ -8,7 +8,6 @@ evidence only after scripts/check_diagnostics.py has passed the whole study.
 
 import argparse
 import datetime as dt
-import hashlib
 import json
 import os
 import subprocess
@@ -32,18 +31,21 @@ def now():
 def steps(study):
     """The study's commands in order; study is relative to the repository root."""
     make = ["make", "--no-print-directory"]
+    # The first step builds once; subsequent targets reuse those same binaries.
+    prepared_make = [*make, "--assume-old=build"]
     check = [sys.executable, "scripts/check_diagnostics.py"]
     reference = study / ANALYSIS / "gemm_comparison.csv"
     return [
-        *((name, [*make, "campaign", f"RUNS={study}", f"CAMPAIGN_ID={name}"])
+        ("build", [*make, "build"]),
+        *((name, [*prepared_make, "campaign", f"RUNS={study}", f"CAMPAIGN_ID={name}"])
           for name in CAMPAIGNS),
         ("check-campaigns", [*check, "--final-campaigns",
                              *(str(study / name) for name in CAMPAIGNS)]),
         (ANALYSIS, [*make, "analyze", f"RUNS={study}", f"FINAL_CAMPAIGNS={' '.join(CAMPAIGNS)}",
                     f"ANALYSIS_OUT={study / ANALYSIS}"]),
-        (PRECISION, [*make, "precision", f"RUNS={study}", f"PRECISION_ID={PRECISION}"]),
+        (PRECISION, [*prepared_make, "precision", f"RUNS={study}", f"PRECISION_ID={PRECISION}"]),
         # The new analysis, never results/, is the profile's CUDA-event reference.
-        (PROFILE, [*make, "gemm-profile", f"RUNS={study}", f"PROFILE_ID={PROFILE}",
+        (PROFILE, [*prepared_make, "gemm-profile", f"RUNS={study}", f"PROFILE_ID={PROFILE}",
                    "PROFILE_CACHE=hot", f"GEMM_SUMMARY={reference}"]),
         ("check-study", [*check, "--study", str(study)]),
     ]
@@ -62,14 +64,6 @@ def run_logged(command, log):
             handle.write(line)
             handle.flush()
         return process.wait()
-
-
-def sha256(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for block in iter(lambda: source.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def main():
@@ -128,7 +122,8 @@ def main():
     with tarfile.open(archive, "x:gz") as bundle:
         bundle.add(directory, arcname=study_id)
     print(f"final-study: COMPLETE {study}\n"
-          f"  archive:       {archive.relative_to(ROOT)} (sha256 {sha256(archive)})\n"
+          f"  archive:       {archive.relative_to(ROOT)} "
+          f"(sha256 {provenance.file_sha256(archive)})\n"
           f"  GPU:           {gpu['uuid']} ({gpu['name']})\n"
           f"  source commit: {repository['commit']}", flush=True)
 

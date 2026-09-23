@@ -354,7 +354,7 @@ def comparison_rows(cublaslt):
     return rows
 
 
-def write_extended(output, shapes, rows, cublaslt, environment, created, warmup, iterations):
+def write_results(output, shapes, rows, cublaslt, environment, created, warmup, iterations):
     """Write both summaries, the raw records and the metadata; decide whether it is complete."""
     from cublaslt_precision import (ARITHMETIC, CUTE_KERNELS, REFERENCE, REQUESTED_ALGORITHMS,
                                     TOLERANCES, WORKSPACE_LIMIT_BYTES, arithmetic)
@@ -500,7 +500,7 @@ def logged(path):
             sys.stdout, sys.stderr = streams
 
 
-def run_extended(output, shapes, warmup, iterations):
+def run_experiment(output, shapes, warmup, iterations):
     import cublaslt_precision
 
     created = dt.datetime.now(dt.timezone.utc).isoformat()
@@ -516,8 +516,8 @@ def run_extended(output, shapes, warmup, iterations):
             print(f"precision: no CUDA kernel event captured for "
                   f"{entry['shape_id']}/{entry['precision']}; selected algorithm and "
                   "validation remain recorded", file=sys.stderr)
-    return write_extended(output, shapes, rows, cublaslt, environment, created,
-                          warmup, iterations)
+    return write_results(output, shapes, rows, cublaslt, environment, created,
+                         warmup, iterations)
 
 
 def main():
@@ -528,7 +528,7 @@ def main():
     output = args.output if args.output.is_absolute() else ROOT / args.output
     output.mkdir(parents=True, exist_ok=False)
     with logged(output / "run.log"):
-        state = run_extended(output, SHAPES, WARMUP_ITERATIONS, ITERATIONS)
+        state = run_experiment(output, SHAPES, WARMUP_ITERATIONS, ITERATIONS)
         print(f"precision: {state} {output}", file=sys.stderr)
     if state != "COMPLETE":
         raise SystemExit(2)

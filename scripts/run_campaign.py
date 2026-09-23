@@ -21,7 +21,6 @@ import ncu_capture
 import provenance
 
 ROOT = Path(__file__).resolve().parents[1]
-DATASETS = ("memory_paths", "umma_throughput", "umma_device_scaling", "gemm_comparison")
 # Final measurement parameters of every campaign and single-experiment run.
 MEMORY = {"working_set_mib": 512, "passes": 32, "warmup_ms": 2000, "repetitions": 30}
 UMMA = {"iterations": 1000, "warmup_iterations": 10, "repetitions": 30}
@@ -51,11 +50,6 @@ def write_rows(path, rows, expected):
         writer.writeheader()
         writer.writerows(rows)
     return len(rows)
-
-
-def selected_gpu():
-    # run_gpu.sh exposes one physical GPU to the container and names it here.
-    return os.environ.get("BLACKWELL_GPU_UUID", "0")
 
 
 def memory_paths(raw):
@@ -105,7 +99,8 @@ def telemetry_overlap(rows, samples):
 
 def umma_device_scaling(raw):
     """Time the four scaling configurations while sampling the SM clock alongside."""
-    with gpu_telemetry.ClockSampler(selected_gpu(), TELEMETRY_INTERVAL_MS) as sampler:
+    gpu = os.environ.get("BLACKWELL_GPU_UUID", "0")
+    with gpu_telemetry.ClockSampler(gpu, TELEMETRY_INTERVAL_MS) as sampler:
         rows = run(["build/umma_throughput/umma_device_scaling", *UMMA_ARGUMENTS])
     summary = sampler.verify()
     summary["written_count"] = sampler.write(raw / "umma_device_scaling_telemetry.csv")
@@ -131,13 +126,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--campaign-id", required=True)
     parser.add_argument("--output-root", type=Path, default=Path("runs"))
-    parser.add_argument("--experiments", default=",".join(DATASETS),
-                        help="comma-separated subset of " + ",".join(DATASETS))
+    parser.add_argument("--experiments", default=",".join(EXPERIMENTS),
+                        help="comma-separated subset of " + ",".join(EXPERIMENTS))
     args = parser.parse_args()
     selected = {name.strip() for name in args.experiments.split(",") if name.strip()}
-    if not selected or selected - set(DATASETS):
-        parser.error("--experiments must name a subset of " + ",".join(DATASETS))
-    experiments = tuple(name for name in DATASETS if name in selected)
+    if not selected or selected - set(EXPERIMENTS):
+        parser.error("--experiments must name a subset of " + ",".join(EXPERIMENTS))
+    experiments = tuple(name for name in EXPERIMENTS if name in selected)
 
     now = dt.datetime.now(dt.timezone.utc)
     root = args.output_root if args.output_root.is_absolute() else ROOT / args.output_root
