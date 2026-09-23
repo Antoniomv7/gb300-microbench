@@ -40,10 +40,15 @@ L2_READ_METRIC = f"{L2_READ_BASE}.sum"
 L2_CALIBRATION = {"section": "memory_paths", "method": "tma", "stages": 4,
                   "bytes_in_flight_kib": 64, "kernel_name": "tma_benchmark_kernel"}
 L2_CALIBRATION_TOLERANCE = 1e-3
-# One setting set for every capture: unlocked clocks and Tensor Core boost as in the CUDA-event
-# runs, and caches flushed before each replay pass so every pass starts from the same state.
-NCU_SETTINGS = (("--clock-control", "none"), ("--pipeline-boost-state", "dynamic"),
-                ("--cache-control", "all"), ("--replay-mode", "kernel"))
+# Cold is the original isolated-kernel diagnostic. Hot re-runs the deterministic
+# application, including its warm-up, for every profiling pass; NCU does not flush L2.
+# Both modes retain the campaign's unlocked clocks and dynamic pipeline boost.
+NCU_SETTINGS = {
+    "cold": (("--clock-control", "none"), ("--pipeline-boost-state", "dynamic"),
+             ("--cache-control", "all"), ("--replay-mode", "kernel")),
+    "hot": (("--clock-control", "none"), ("--pipeline-boost-state", "dynamic"),
+            ("--cache-control", "none"), ("--replay-mode", "application")),
+}
 CAPTURE_TIMEOUT_S = 1800
 SOURCES = ("scripts/profile_gemm.py", "scripts/provenance.py", "scripts/ncu_capture.py",
            "gemm_comparison/gemm_comparison.py", "gemm_comparison/cublaslt_bridge.cu")
@@ -199,7 +204,7 @@ def query_metric(base):
     return None
 
 
-def calibrate_l2_metric(directory, log):
+def calibrate_l2_metric(directory, log, ncu_settings):
     """Admit the L2 read metric only if the device supports it and a known stream confirms it."""
     query = query_metric(L2_READ_BASE)
     record = {"metric": L2_READ_METRIC, "query": query, "collected": False}
@@ -209,7 +214,7 @@ def calibrate_l2_metric(directory, log):
     # A TMA stream with no reuse reads every logical byte from L2 exactly once.
     case = directory / "calibration_tma_stream"
     metrics = (*DRAM_METRICS, L2_READ_METRIC)
-    command = ncu(*(item for pair in NCU_SETTINGS for item in pair), "--devices", "0",
+    command = ncu(*(item for pair in ncu_settings for item in pair), "--devices", "0",
                   "--kernel-name-base", "function", "--kernel-name", L2_CALIBRATION["kernel_name"],
                   "--launch-count", "1", "--print-summary", "none",
                   "--metrics", ",".join(metrics), "-o", case, "--",
@@ -279,10 +284,10 @@ def traffic(shape, metrics, units):
     return result
 
 
-def capture(directory, index, shape, variant, metrics, log):
+def capture(directory, index, shape, variant, metrics, log, ncu_settings):
     case = f"{index:02d}_{shape_id(shape[:3])}_{variant}"
     stem = directory / case
-    command = ncu(*(item for pair in NCU_SETTINGS for item in pair), "--devices", "0",
+    command = ncu(*(item for pair in ncu_settings for item in pair), "--devices", "0",
                   "--nvtx", "--nvtx-include", f"{NVTX_RANGE}/", "--kernel-name-base", "function",
                   "--print-summary", "none", "--metrics", ",".join(metrics), "-o", stem, "--",
                   sys.executable, Path(__file__).resolve(), "--worker",
@@ -368,7 +373,8 @@ def ncu_version():
     return next((line.strip() for line in output.splitlines() if "Version" in line), output.strip())
 
 
-def profile(output):
+def profile(output, cache_state):
+    ncu_settings = NCU_SETTINGS[cache_state]
     directory = output if output.is_absolute() else ROOT / output
     directory.mkdir(parents=True, exist_ok=False)
     log = Log(directory / "profile.log")
@@ -378,12 +384,12 @@ def profile(output):
                    "pinned": provenance.pinned_versions()}
     log(f"GPU {environment['gpu']['uuid']} ({environment['gpu']['name']}), {environment['ncu']}")
 
-    l2_metric = calibrate_l2_metric(directory, log)
+    l2_metric = calibrate_l2_metric(directory, log, ncu_settings)
     log(f"L2 read metric {L2_READ_METRIC}: "
         f"{'collected' if l2_metric['collected'] else 'not collected: ' + l2_metric['reason']}")
     metrics = (*DRAM_METRICS, *TIMING_METRICS, *((L2_READ_METRIC,) if l2_metric["collected"] else ()))
 
-    captures = [capture(directory, index, shape, variant, metrics, log)
+    captures = [capture(directory, index, shape, variant, metrics, log, ncu_settings)
                 for index, (shape, variant) in enumerate(
                     (shape, variant) for shape in SHAPES for variant in VARIANTS)]
     passed = sum(record["status"] == "PASS" for record in captures)
@@ -399,7 +405,8 @@ def profile(output):
         writer.writeheader()
         writer.writerows(summary_rows(captures))
     index = {
-        "study": "gemm_profile", "state": "COMPLETE" if complete else "INCOMPLETE",
+        "study": "gemm_profile", "cache_state": cache_state,
+        "state": "COMPLETE" if complete else "INCOMPLETE",
         "created_utc": created, "command": [sys.executable, *sys.argv],
         "expected_count": expected, "captured_count": len(captures), "passed_count": passed,
         "shared_operands_per_shape": shared_operands,
@@ -413,7 +420,11 @@ def profile(output):
                                 "first validated launch", "warm-up launches",
                                 "post-capture validation"],
             "nvtx_filter": f"{NVTX_RANGE}/",
-            "ncu_settings": {flag.lstrip("-"): value for flag, value in NCU_SETTINGS},
+            "ncu_settings": {flag.lstrip("-"): value for flag, value in ncu_settings},
+            "cache_interpretation": ("profiler flushes caches before replay passes" if
+                                     cache_state == "cold" else
+                                     "application replays validation and warm-up before each "
+                                     "profiled launch; profiler does not flush caches"),
             "metrics": list(metrics),
             "performance_results": "CUDA-event measurements in results/gemm_comparison.csv; "
                                    "profiler durations are diagnostics"},
@@ -429,6 +440,8 @@ def profile(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output", type=Path, default=Path("runs/gemm-profile-final"))
+    parser.add_argument("--cache-state", choices=tuple(NCU_SETTINGS), default="cold",
+                        help="cold: existing kernel replay; hot: application replay after warm-up")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--shape", type=parse_shape, help=argparse.SUPPRESS)
     parser.add_argument("--variant", choices=VARIANTS, help=argparse.SUPPRESS)
@@ -439,7 +452,7 @@ def main():
             parser.error("--worker requires --shape, --variant and --result")
         worker(args.shape, args.variant, args.result)
         return
-    if not profile(args.output):
+    if not profile(args.output, args.cache_state):
         raise SystemExit(2)
 
 
