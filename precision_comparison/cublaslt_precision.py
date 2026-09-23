@@ -496,7 +496,10 @@ class Baseline:
                     plan.info.record()["algorithm_data"] == entry["algorithm"]["algorithm_data"])
                 plan()
                 torch.cuda.synchronize()
-                with profile(activities=[ProfilerActivity.CUDA]) as trace:
+                # One diagnostic capture after timing. The selected algorithm is
+                # checked independently; an empty trace does not mean no kernel ran.
+                with profile(activities=[ProfilerActivity.CPU,
+                                         ProfilerActivity.CUDA]) as trace:
                     plan()
                     torch.cuda.synchronize()
             finally:
@@ -504,4 +507,5 @@ class Baseline:
             names = [event.name for event in trace.events() if event.device_type.name == "CUDA"
                      and not event.name.startswith(("Memset", "Memcpy"))]
             entry["kernel_names"] = names
-            entry["kernels_per_launch"] = len(names)
+            entry["kernel_identification_status"] = "CAPTURED" if names else "UNAVAILABLE"
+            entry["kernels_per_launch"] = len(names) if names else None
