@@ -1,16 +1,16 @@
 include VERSIONS.env
 
 IMAGE_TAG ?= gb300-microbench:latest
-CAMPAIGN_KIND ?= final
+RUNS ?= runs
+# Optional IDs of new directories under RUNS; by default a UTC timestamp makes them unique.
 CAMPAIGN_ID ?=
-CAMPAIGN_ROOT ?= runs
-CAMPAIGN_NCU ?= $(if $(filter pilot,$(CAMPAIGN_KIND)),0,1)
+PRECISION_ID ?=
+PROFILE_ID ?=
+# Inputs of the underlying analyze and gemm-profile commands, which final-study sets itself.
 FINAL_CAMPAIGNS ?=
 ANALYSIS_OUT ?=
-PROFILE_ID ?=
 PROFILE_CACHE ?=
 GEMM_SUMMARY ?=
-PRECISION_ID ?=
 ARCH ?= $(CUDA_ARCH)
 VIRTUAL_ARCH := compute_$(patsubst sm_%,%,$(ARCH))
 NVCC ?= nvcc
@@ -19,25 +19,35 @@ BINARIES := $(addprefix build/memory_paths/,ldgsts tma) \
             $(addprefix build/umma_throughput/,umma_1sm umma_2sm umma_device_scaling)
 BRIDGE := build/gemm_comparison/libcublaslt_bridge.so
 PRECISION_BRIDGE := build/precision_comparison/libcublaslt_precision_bridge.so
+STAMP = $$(date -u +%Y%m%dT%H%M%SZ)
+CHECK = python3 scripts/check_diagnostics.py
 export IMAGE_TAG
 
 # Fail before any GPU work when a required variable is empty.
 require = $(if $(strip $($(1))),,$(error $(1) is required))
+# $(1): new run ID; $(2): experiments, or empty for all four. Each run is checked independently.
+run_campaign = id="$(1)"; set -e; \
+	scripts/run_gpu.sh python3 scripts/run_campaign.py $(if $(2),--experiments $(2)) \
+		--output-root "$(RUNS)" --campaign-id "$$id"; \
+	$(CHECK) --campaign "$(RUNS)/$$id"
 
 .DEFAULT_GOAL := help
-.PHONY: help image build compile clean smoke campaign analyze precision-extended gemm-profile \
-	check-diagnostics
+.PHONY: help image build compile clean exp1-memory exp2-umma exp3-scaling exp4-gemm precision \
+	final-study campaign analyze gemm-profile
 
 help:
-	@echo "make image              Build the pinned CUDA/CuTe DSL image"
-	@echo "make build              Compile the five benchmarks and both cuBLASLt bridges"
-	@echo "make smoke              Run a short pilot of the four campaign experiments"
-	@echo "make campaign           Run one pilot or final campaign (CAMPAIGN_ID, CAMPAIGN_NCU)"
-	@echo "make analyze            Summarize three final campaigns (FINAL_CAMPAIGNS, ANALYSIS_OUT)"
-	@echo "make precision-extended Run Experiment V with its cuBLASLt baseline (PRECISION_ID)"
-	@echo "make gemm-profile       Profile P2 and cuBLASLt with Nsight Compute"
-	@echo "                        (PROFILE_CACHE=hot|cold, PROFILE_ID, GEMM_SUMMARY)"
-	@echo "make check-diagnostics  Check a GEMM profile and a precision run (PROFILE_ID, PRECISION_ID)"
+	@echo "Set BLACKWELL_GPU_INDEX, then (final parameters, one new directory under $(RUNS)/ each):"
+	@echo "  make exp1-memory   I    LDGSTS versus TMA, with its 6 NCU DRAM captures"
+	@echo "  make exp2-umma     II   isolated 1-SM versus 2-SM UMMA, with its 2 NCU SM-clock captures"
+	@echo "  make exp3-scaling  III  whole-device UMMA scaling, with nvidia-smi clock telemetry"
+	@echo "  make exp4-gemm     IV   BF16 CuTe DSL variants versus cuBLASLt"
+	@echo "  make precision     V    BF16, FP8 and NVFP4 with CuTe DSL and cuBLASLt"
+	@echo "  make final-study        I-IV three times, V once, hot-cache GEMM profile, archive"
+	@echo "Setup: make image; make build. Underlying commands for diagnosis:"
+	@echo "  make campaign [CAMPAIGN_ID=id]"
+	@echo "  make analyze FINAL_CAMPAIGNS=\"id1 id2 id3\" ANALYSIS_OUT=directory"
+	@echo "  make gemm-profile PROFILE_CACHE=hot|cold GEMM_SUMMARY=analysis/gemm_comparison.csv"
+	@echo "  python3 scripts/check_diagnostics.py --help"
 
 image:
 	docker build --platform "$(CUDA_IMAGE_PLATFORM)" \
@@ -73,41 +83,45 @@ $(PRECISION_BRIDGE): precision_comparison/cublaslt_precision_bridge.cu
 	$(NVCC) $(NVCCFLAGS) -Xcompiler -fPIC -shared -arch=$(VIRTUAL_ARCH) \
 		-code=$(ARCH) -o $@ $< -lcublasLt -lcudart
 
-smoke: build
-	scripts/run_gpu.sh python3 scripts/run_campaign.py --kind pilot \
-		--campaign-id "smoke-$$(date -u +%Y%m%dT%H%M%SZ)" --output-root "$(CAMPAIGN_ROOT)"
+exp1-memory: build
+	$(call run_campaign,exp1-memory-$(STAMP),memory_paths)
+
+exp2-umma: build
+	$(call run_campaign,exp2-umma-$(STAMP),umma_throughput)
+
+exp3-scaling: build
+	$(call run_campaign,exp3-scaling-$(STAMP),umma_device_scaling)
+
+exp4-gemm: build
+	$(call run_campaign,exp4-gemm-$(STAMP),gemm_comparison)
+
+precision: build
+	id="$(or $(PRECISION_ID),precision-$(STAMP))"; set -e; \
+	scripts/run_gpu.sh python3 precision_comparison/precision_comparison.py \
+		--output "$(RUNS)/$$id"; \
+	$(CHECK) --precision "$(RUNS)/$$id"
+
+final-study: build
+	python3 scripts/final_study.py --runs "$(RUNS)"
 
 campaign: build
-	scripts/run_gpu.sh python3 scripts/run_campaign.py --kind "$(CAMPAIGN_KIND)" \
-		--output-root "$(CAMPAIGN_ROOT)" \
-		$(if $(strip $(CAMPAIGN_ID)),--campaign-id "$(CAMPAIGN_ID)") \
-		$(if $(filter 1 yes true,$(CAMPAIGN_NCU)),--with-ncu)
+	$(call run_campaign,$(or $(CAMPAIGN_ID),campaign-$(STAMP)),)
 
 analyze:
 	$(call require,ANALYSIS_OUT)
 	@test "$(words $(FINAL_CAMPAIGNS))" -eq 3 || { \
 		echo "FINAL_CAMPAIGNS must contain exactly three IDs" >&2; exit 2; }
 	python3 analysis/analyze.py \
-		$(foreach id,$(FINAL_CAMPAIGNS),--campaign "$(CAMPAIGN_ROOT)/$(id)") \
+		$(foreach id,$(FINAL_CAMPAIGNS),--campaign "$(RUNS)/$(id)") \
 		--output "$(ANALYSIS_OUT)"
 
-precision-extended: build
-	$(call require,PRECISION_ID)
-	scripts/run_gpu.sh python3 precision_comparison/precision_comparison.py \
-		--output "$(CAMPAIGN_ROOT)/$(PRECISION_ID)"
-
 gemm-profile: build
-	$(call require,PROFILE_ID)
 	$(call require,PROFILE_CACHE)
 	$(call require,GEMM_SUMMARY)
+	id="$(or $(PROFILE_ID),gemm-profile-$(PROFILE_CACHE)-$(STAMP))"; set -e; \
 	scripts/run_gpu.sh python3 scripts/profile_gemm.py --cache-state "$(PROFILE_CACHE)" \
-		--gemm-summary "$(GEMM_SUMMARY)" --output "$(CAMPAIGN_ROOT)/$(PROFILE_ID)"
-
-check-diagnostics:
-	$(call require,PROFILE_ID)
-	$(call require,PRECISION_ID)
-	python3 scripts/check_diagnostics.py --gemm-profile "$(CAMPAIGN_ROOT)/$(PROFILE_ID)" \
-		--precision "$(CAMPAIGN_ROOT)/$(PRECISION_ID)"
+		--gemm-summary "$(GEMM_SUMMARY)" --output "$(RUNS)/$$id"; \
+	$(CHECK) --gemm-profile "$(RUNS)/$$id"
 
 clean:
 	rm -rf build
