@@ -18,60 +18,60 @@
 <text x="658.0" y="94.0" font-family="Arial, sans-serif" font-size="11" fill="#334155">CuTe DSL persistent 2-CTA</text>
 <rect x="940" y="83" width="12" height="12" fill="#166534"/>
 <text x="958.0" y="94.0" font-family="Arial, sans-serif" font-size="11" fill="#334155">cuBLASLt first supported heuristic</text>
-<rect x="136.3" y="362.8" width="24" height="45.2" fill="#d97706"><title>CuTe DSL persistent 2-CTA, BF16, 4096x4096x4096x1: 1,685.0 TFLOP/s (range 1,679.7 to 1,690.4)</title></rect>
-<line x1="148.3" y1="363.0" x2="148.3" y2="362.7" stroke="#0f172a"/>
-<rect x="162.3" y="360.6" width="24" height="47.4" fill="#166534"><title>cuBLASLt first supported heuristic, BF16, 4096x4096x4096x1: 1,768.7 TFLOP/s (range 1,767.0 to 1,769.5)</title></rect>
-<line x1="174.3" y1="360.6" x2="174.3" y2="360.6" stroke="#0f172a"/>
+<rect x="136.3" y="362.9" width="24" height="45.1" fill="#d97706"><title>CuTe DSL persistent 2-CTA, BF16, 4096x4096x4096x1: 1,681.3 TFLOP/s (range 1,678.8 to 1,684.0)</title></rect>
+<line x1="148.3" y1="363.0" x2="148.3" y2="362.9" stroke="#0f172a"/>
+<rect x="162.3" y="360.6" width="24" height="47.4" fill="#166534"><title>cuBLASLt first supported heuristic, BF16, 4096x4096x4096x1: 1,768.0 TFLOP/s (range 1,764.9 to 1,769.5)</title></rect>
+<line x1="174.3" y1="360.7" x2="174.3" y2="360.6" stroke="#0f172a"/>
 <text x="161.3" y="352.6" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">0.95×</text>
 <text x="161.3" y="426.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">BF16</text>
-<rect x="250.3" y="329.3" width="24" height="78.7" fill="#d97706"><title>CuTe DSL persistent 2-CTA, FP8 E4M3, 4096x4096x4096x1: 2,938.0 TFLOP/s (range 2,930.5 to 2,943.4)</title></rect>
+<rect x="250.3" y="329.3" width="24" height="78.7" fill="#d97706"><title>CuTe DSL persistent 2-CTA, FP8 E4M3, 4096x4096x4096x1: 2,936.8 TFLOP/s (range 2,930.4 to 2,943.4)</title></rect>
 <line x1="262.3" y1="329.5" x2="262.3" y2="329.1" stroke="#0f172a"/>
-<rect x="276.3" y="322.6" width="24" height="85.4" fill="#166534"><title>cuBLASLt first supported heuristic, FP8 E4M3, 4096x4096x4096x1: 3,188.3 TFLOP/s (range 3,181.3 to 3,191.9)</title></rect>
+<rect x="276.3" y="322.6" width="24" height="85.4" fill="#166534"><title>cuBLASLt first supported heuristic, FP8 E4M3, 4096x4096x4096x1: 3,187.1 TFLOP/s (range 3,181.8 to 3,191.9)</title></rect>
 <line x1="288.3" y1="322.7" x2="288.3" y2="322.5" stroke="#0f172a"/>
 <text x="275.3" y="314.5" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">0.92×</text>
 <text x="275.3" y="426.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">FP8 E4M3</text>
-<rect x="364.3" y="299.9" width="24" height="108.1" fill="#d97706"><title>CuTe DSL persistent 2-CTA, NVFP4 E2M1, 4096x4096x4096x1: 4,032.9 TFLOP/s (range 3,988.6 to 4,061.2)</title></rect>
-<line x1="376.3" y1="301.1" x2="376.3" y2="299.2" stroke="#0f172a"/>
-<rect x="390.3" y="279.6" width="24" height="128.4" fill="#166534"><title>cuBLASLt first supported heuristic, NVFP4 E2M1, 4096x4096x4096x1: 4,791.4 TFLOP/s (range 4,777.0 to 4,802.1)</title></rect>
+<rect x="364.3" y="300.0" width="24" height="108.0" fill="#d97706"><title>CuTe DSL persistent 2-CTA, NVFP4 E2M1, 4096x4096x4096x1: 4,029.0 TFLOP/s (range 3,988.8 to 4,061.6)</title></rect>
+<line x1="376.3" y1="301.1" x2="376.3" y2="299.1" stroke="#0f172a"/>
+<rect x="390.3" y="279.7" width="24" height="128.3" fill="#166534"><title>cuBLASLt first supported heuristic, NVFP4 E2M1, 4096x4096x4096x1: 4,785.6 TFLOP/s (range 4,776.7 to 4,802.1)</title></rect>
 <line x1="402.3" y1="280.0" x2="402.3" y2="279.3" stroke="#0f172a"/>
 <text x="389.3" y="271.3" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">0.84×</text>
 <text x="389.3" y="426.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">NVFP4 E2M1</text>
 <text x="275.3" y="450.0" font-family="Arial, sans-serif" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">4096×4096×4096</text>
-<rect x="515.0" y="368.9" width="24" height="39.1" fill="#d97706"><title>CuTe DSL persistent 2-CTA, BF16, 8192x8192x8192x1: 1,459.0 TFLOP/s (range 1,458.0 to 1,460.8)</title></rect>
+<rect x="515.0" y="368.9" width="24" height="39.1" fill="#d97706"><title>CuTe DSL persistent 2-CTA, BF16, 8192x8192x8192x1: 1,458.5 TFLOP/s (range 1,457.8 to 1,459.6)</title></rect>
 <line x1="527.0" y1="368.9" x2="527.0" y2="368.9" stroke="#0f172a"/>
-<rect x="541.0" y="351.8" width="24" height="56.2" fill="#166534"><title>cuBLASLt first supported heuristic, BF16, 8192x8192x8192x1: 2,097.5 TFLOP/s (range 2,096.9 to 2,098.2)</title></rect>
-<line x1="553.0" y1="351.8" x2="553.0" y2="351.8" stroke="#0f172a"/>
-<text x="540.0" y="343.8" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">0.70×</text>
+<rect x="541.0" y="351.7" width="24" height="56.3" fill="#166534"><title>cuBLASLt first supported heuristic, BF16, 8192x8192x8192x1: 2,099.3 TFLOP/s (range 2,099.0 to 2,099.4)</title></rect>
+<line x1="553.0" y1="351.7" x2="553.0" y2="351.7" stroke="#0f172a"/>
+<text x="540.0" y="343.7" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">0.69×</text>
 <text x="540.0" y="426.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">BF16</text>
-<rect x="629.0" y="324.3" width="24" height="83.7" fill="#d97706"><title>CuTe DSL persistent 2-CTA, FP8 E4M3, 8192x8192x8192x1: 3,122.9 TFLOP/s (range 3,119.5 to 3,128.6)</title></rect>
-<line x1="641.0" y1="324.4" x2="641.0" y2="324.2" stroke="#0f172a"/>
-<rect x="655.0" y="302.4" width="24" height="105.6" fill="#166534"><title>cuBLASLt first supported heuristic, FP8 E4M3, 8192x8192x8192x1: 3,941.1 TFLOP/s (range 3,936.1 to 3,945.4)</title></rect>
-<line x1="667.0" y1="302.5" x2="667.0" y2="302.3" stroke="#0f172a"/>
-<text x="654.0" y="294.3" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">0.79×</text>
+<rect x="629.0" y="324.3" width="24" height="83.7" fill="#d97706"><title>CuTe DSL persistent 2-CTA, FP8 E4M3, 8192x8192x8192x1: 3,125.0 TFLOP/s (range 3,123.2 to 3,128.2)</title></rect>
+<line x1="641.0" y1="324.3" x2="641.0" y2="324.2" stroke="#0f172a"/>
+<rect x="655.0" y="302.3" width="24" height="105.7" fill="#166534"><title>cuBLASLt first supported heuristic, FP8 E4M3, 8192x8192x8192x1: 3,944.7 TFLOP/s (range 3,940.3 to 3,950.5)</title></rect>
+<line x1="667.0" y1="302.4" x2="667.0" y2="302.1" stroke="#0f172a"/>
+<text x="654.0" y="294.1" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">0.79×</text>
 <text x="654.0" y="426.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">FP8 E4M3</text>
-<rect x="743.0" y="258.8" width="24" height="149.2" fill="#d97706"><title>CuTe DSL persistent 2-CTA, NVFP4 E2M1, 8192x8192x8192x1: 5,568.8 TFLOP/s (range 5,550.5 to 5,579.3)</title></rect>
-<line x1="755.0" y1="259.2" x2="755.0" y2="258.5" stroke="#0f172a"/>
-<rect x="769.0" y="205.9" width="24" height="202.1" fill="#166534"><title>cuBLASLt first supported heuristic, NVFP4 E2M1, 8192x8192x8192x1: 7,542.1 TFLOP/s (range 7,537.7 to 7,545.7)</title></rect>
-<line x1="781.0" y1="206.0" x2="781.0" y2="205.8" stroke="#0f172a"/>
-<text x="768.0" y="197.8" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">0.74×</text>
+<rect x="743.0" y="258.7" width="24" height="149.3" fill="#d97706"><title>CuTe DSL persistent 2-CTA, NVFP4 E2M1, 8192x8192x8192x1: 5,572.2 TFLOP/s (range 5,556.2 to 5,586.6)</title></rect>
+<line x1="755.0" y1="259.1" x2="755.0" y2="258.3" stroke="#0f172a"/>
+<rect x="769.0" y="205.8" width="24" height="202.2" fill="#166534"><title>cuBLASLt first supported heuristic, NVFP4 E2M1, 8192x8192x8192x1: 7,545.6 TFLOP/s (range 7,543.0 to 7,548.2)</title></rect>
+<line x1="781.0" y1="205.8" x2="781.0" y2="205.7" stroke="#0f172a"/>
+<text x="768.0" y="197.7" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">0.74×</text>
 <text x="768.0" y="426.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">NVFP4 E2M1</text>
 <text x="654.0" y="450.0" font-family="Arial, sans-serif" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">8192×8192×8192</text>
-<rect x="893.7" y="387.7" width="24" height="20.3" fill="#d97706"><title>CuTe DSL persistent 2-CTA, BF16, 32768x512x4096x1: 757.6 TFLOP/s (range 757.0 to 758.5)</title></rect>
-<line x1="905.7" y1="387.7" x2="905.7" y2="387.7" stroke="#0f172a"/>
-<rect x="919.7" y="367.4" width="24" height="40.6" fill="#166534"><title>cuBLASLt first supported heuristic, BF16, 32768x512x4096x1: 1,516.0 TFLOP/s (range 1,513.2 to 1,520.0)</title></rect>
+<rect x="893.7" y="387.7" width="24" height="20.3" fill="#d97706"><title>CuTe DSL persistent 2-CTA, BF16, 32768x512x4096x1: 756.7 TFLOP/s (range 754.9 to 757.7)</title></rect>
+<line x1="905.7" y1="387.8" x2="905.7" y2="387.7" stroke="#0f172a"/>
+<rect x="919.7" y="367.4" width="24" height="40.6" fill="#166534"><title>cuBLASLt first supported heuristic, BF16, 32768x512x4096x1: 1,516.3 TFLOP/s (range 1,513.9 to 1,518.3)</title></rect>
 <line x1="931.7" y1="367.4" x2="931.7" y2="367.3" stroke="#0f172a"/>
 <text x="918.7" y="359.3" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">0.50×</text>
 <text x="918.7" y="426.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">BF16</text>
-<rect x="1007.7" y="361.9" width="24" height="46.1" fill="#d97706"><title>CuTe DSL persistent 2-CTA, FP8 E4M3, 32768x512x4096x1: 1,721.1 TFLOP/s (range 1,718.5 to 1,722.9)</title></rect>
-<line x1="1019.7" y1="361.9" x2="1019.7" y2="361.8" stroke="#0f172a"/>
-<rect x="1033.7" y="336.4" width="24" height="71.6" fill="#166534"><title>cuBLASLt first supported heuristic, FP8 E4M3, 32768x512x4096x1: 2,672.9 TFLOP/s (range 2,671.0 to 2,676.3)</title></rect>
-<line x1="1045.7" y1="336.4" x2="1045.7" y2="336.3" stroke="#0f172a"/>
+<rect x="1007.7" y="361.9" width="24" height="46.1" fill="#d97706"><title>CuTe DSL persistent 2-CTA, FP8 E4M3, 32768x512x4096x1: 1,718.5 TFLOP/s (range 1,715.2 to 1,722.9)</title></rect>
+<line x1="1019.7" y1="362.0" x2="1019.7" y2="361.8" stroke="#0f172a"/>
+<rect x="1033.7" y="336.4" width="24" height="71.6" fill="#166534"><title>cuBLASLt first supported heuristic, FP8 E4M3, 32768x512x4096x1: 2,672.8 TFLOP/s (range 2,665.7 to 2,676.3)</title></rect>
+<line x1="1045.7" y1="336.6" x2="1045.7" y2="336.3" stroke="#0f172a"/>
 <text x="1032.7" y="328.3" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">0.64×</text>
 <text x="1032.7" y="426.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">FP8 E4M3</text>
-<rect x="1121.7" y="327.8" width="24" height="80.2" fill="#d97706"><title>CuTe DSL persistent 2-CTA, NVFP4 E2M1, 32768x512x4096x1: 2,992.8 TFLOP/s (range 2,979.2 to 3,006.1)</title></rect>
-<line x1="1133.7" y1="328.2" x2="1133.7" y2="327.4" stroke="#0f172a"/>
-<rect x="1147.7" y="298.4" width="24" height="109.6" fill="#166534"><title>cuBLASLt first supported heuristic, NVFP4 E2M1, 32768x512x4096x1: 4,087.7 TFLOP/s (range 4,079.6 to 4,098.1)</title></rect>
-<line x1="1159.7" y1="298.7" x2="1159.7" y2="298.2" stroke="#0f172a"/>
+<rect x="1121.7" y="327.6" width="24" height="80.4" fill="#d97706"><title>CuTe DSL persistent 2-CTA, NVFP4 E2M1, 32768x512x4096x1: 3,001.5 TFLOP/s (range 2,985.4 to 3,012.8)</title></rect>
+<line x1="1133.7" y1="328.0" x2="1133.7" y2="327.3" stroke="#0f172a"/>
+<rect x="1147.7" y="298.2" width="24" height="109.8" fill="#166534"><title>cuBLASLt first supported heuristic, NVFP4 E2M1, 32768x512x4096x1: 4,096.2 TFLOP/s (range 4,092.2 to 4,098.3)</title></rect>
+<line x1="1159.7" y1="298.3" x2="1159.7" y2="298.2" stroke="#0f172a"/>
 <text x="1146.7" y="290.2" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">0.73×</text>
 <text x="1146.7" y="426.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">NVFP4 E2M1</text>
 <text x="1032.7" y="450.0" font-family="Arial, sans-serif" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">32768×512×4096</text>
