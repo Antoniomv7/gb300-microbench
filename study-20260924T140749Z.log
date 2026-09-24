@@ -1,0 +1,620 @@
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+	-v "/home/zoro/work/gb300-microbench:/workspace" -w /workspace "gb300-microbench:latest" \
+	make compile ARCH="sm_103a"
+
+==========
+== CUDA ==
+==========
+
+CUDA Version 13.1.0
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+
+WARNING: The NVIDIA Driver was not detected.  GPU functionality will not be available.
+   Use the NVIDIA Container Toolkit to start this container with GPU support; see
+   https://docs.nvidia.com/datacenter/cloud-native/ .
+
+make: Nothing to be done for 'compile'.
+scripts/run_gpu.sh python3 scripts/run_campaign.py --output runs/study-20260924T140749Z/campaign-1
+run_gpu: GPU 6 (GPU-619f7fdc-5f98-8c37-fe89-0465d6130baf)
+
+==========
+== CUDA ==
+==========
+
+CUDA Version 13.1.0
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+
+campaign: build/memory_paths/ldgsts --stages 2 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 2 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 2 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 2 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 2 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 2 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 4 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 4 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 4 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 4 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 4 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 4 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 8 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 8 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 8 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 8 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 8 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 8 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 4
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 4
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 16
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 16
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 64
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 64
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 256
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 256
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 4
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 4
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 16
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 16
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 64
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 64
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 256
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 256
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 4
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 4
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 16
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 16
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 64
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 64
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 256
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 256
+campaign: build/umma_throughput/umma_device_scaling --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30
+campaign: /opt/venv/bin/python3 gemm_comparison/gemm_comparison.py --warmup-iterations 2 --iterations 10
+gemm: 4096x4096x4096x1/nonpersistent_1cta
+/opt/venv/lib/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/pipeline/helpers.py:616: UserWarning: NamedBarrier ID 0 is used by sync_threads, avoid using.
+  warnings.warn("NamedBarrier ID 0 is used by sync_threads, avoid using.")
+gemm: 4096x4096x4096x1/persistent_1cta
+gemm: 4096x4096x4096x1/persistent_2cta
+gemm: 4096x4096x4096x1/heuristic_first_supported
+gemm: 8192x8192x8192x1/nonpersistent_1cta
+gemm: 8192x8192x8192x1/persistent_1cta
+gemm: 8192x8192x8192x1/persistent_2cta
+gemm: 8192x8192x8192x1/heuristic_first_supported
+gemm: 16384x512x4096x1/nonpersistent_1cta
+gemm: 16384x512x4096x1/persistent_1cta
+gemm: 16384x512x4096x1/persistent_2cta
+gemm: 16384x512x4096x1/heuristic_first_supported
+gemm: 32768x512x4096x1/nonpersistent_1cta
+gemm: 32768x512x4096x1/persistent_1cta
+gemm: 32768x512x4096x1/persistent_2cta
+gemm: 32768x512x4096x1/heuristic_first_supported
+gemm: 512x16384x4096x1/nonpersistent_1cta
+gemm: 512x16384x4096x1/persistent_1cta
+gemm: 512x16384x4096x1/persistent_2cta
+gemm: 512x16384x4096x1/heuristic_first_supported
+ncu: 00_ldgsts_s2_bif16
+ncu: 01_tma_s2_bif16
+ncu: 02_tma_s4_bif32
+ncu: 03_ldgsts_s4_bif32
+ncu: 04_ldgsts_s8_bif64
+ncu: 05_tma_s8_bif64
+ncu: 00_umma_1sm_n256_d256
+ncu: 01_umma_2sm_n256_d256
+campaign: complete /workspace/runs/study-20260924T140749Z/campaign-1
+scripts/run_gpu.sh python3 scripts/run_campaign.py --output runs/study-20260924T140749Z/campaign-2
+run_gpu: GPU 6 (GPU-619f7fdc-5f98-8c37-fe89-0465d6130baf)
+
+==========
+== CUDA ==
+==========
+
+CUDA Version 13.1.0
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+
+campaign: build/memory_paths/ldgsts --stages 2 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 2 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 2 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 2 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 2 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 2 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 4 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 4 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 4 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 4 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 4 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 4 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 8 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 8 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 8 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 8 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 8 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 8 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 4
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 4
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 16
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 16
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 64
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 64
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 256
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 256
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 4
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 4
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 16
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 16
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 64
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 64
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 256
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 256
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 4
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 4
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 16
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 16
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 64
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 64
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 256
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 256
+campaign: build/umma_throughput/umma_device_scaling --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30
+campaign: /opt/venv/bin/python3 gemm_comparison/gemm_comparison.py --warmup-iterations 2 --iterations 10
+gemm: 4096x4096x4096x1/nonpersistent_1cta
+/opt/venv/lib/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/pipeline/helpers.py:616: UserWarning: NamedBarrier ID 0 is used by sync_threads, avoid using.
+  warnings.warn("NamedBarrier ID 0 is used by sync_threads, avoid using.")
+gemm: 4096x4096x4096x1/persistent_1cta
+gemm: 4096x4096x4096x1/persistent_2cta
+gemm: 4096x4096x4096x1/heuristic_first_supported
+gemm: 8192x8192x8192x1/nonpersistent_1cta
+gemm: 8192x8192x8192x1/persistent_1cta
+gemm: 8192x8192x8192x1/persistent_2cta
+gemm: 8192x8192x8192x1/heuristic_first_supported
+gemm: 16384x512x4096x1/nonpersistent_1cta
+gemm: 16384x512x4096x1/persistent_1cta
+gemm: 16384x512x4096x1/persistent_2cta
+gemm: 16384x512x4096x1/heuristic_first_supported
+gemm: 32768x512x4096x1/nonpersistent_1cta
+gemm: 32768x512x4096x1/persistent_1cta
+gemm: 32768x512x4096x1/persistent_2cta
+gemm: 32768x512x4096x1/heuristic_first_supported
+gemm: 512x16384x4096x1/nonpersistent_1cta
+gemm: 512x16384x4096x1/persistent_1cta
+gemm: 512x16384x4096x1/persistent_2cta
+gemm: 512x16384x4096x1/heuristic_first_supported
+ncu: 00_ldgsts_s2_bif16
+ncu: 01_tma_s2_bif16
+ncu: 02_tma_s4_bif32
+ncu: 03_ldgsts_s4_bif32
+ncu: 04_ldgsts_s8_bif64
+ncu: 05_tma_s8_bif64
+ncu: 00_umma_1sm_n256_d256
+ncu: 01_umma_2sm_n256_d256
+campaign: complete /workspace/runs/study-20260924T140749Z/campaign-2
+scripts/run_gpu.sh python3 scripts/run_campaign.py --output runs/study-20260924T140749Z/campaign-3
+run_gpu: GPU 6 (GPU-619f7fdc-5f98-8c37-fe89-0465d6130baf)
+
+==========
+== CUDA ==
+==========
+
+CUDA Version 13.1.0
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+
+campaign: build/memory_paths/ldgsts --stages 2 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 2 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 2 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 2 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 2 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 2 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 4 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 4 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 4 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 4 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 4 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 4 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 8 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 8 --bytes-in-flight-kib 16 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 8 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 8 --bytes-in-flight-kib 32 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/ldgsts --stages 8 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/memory_paths/tma --stages 8 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 2000 --repetitions 30
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 4
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 4
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 16
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 16
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 64
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 64
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 256
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 64 --depth 256
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 4
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 4
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 16
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 16
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 64
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 64
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 256
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 128 --depth 256
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 4
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 4
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 16
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 16
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 64
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 64
+campaign: build/umma_throughput/umma_1sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 256
+campaign: build/umma_throughput/umma_2sm --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30 --n 256 --depth 256
+campaign: build/umma_throughput/umma_device_scaling --run-kind benchmark --iterations 1000 --warmup-iterations 10 --repetitions 30
+campaign: /opt/venv/bin/python3 gemm_comparison/gemm_comparison.py --warmup-iterations 2 --iterations 10
+gemm: 4096x4096x4096x1/nonpersistent_1cta
+/opt/venv/lib/python3.12/site-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/pipeline/helpers.py:616: UserWarning: NamedBarrier ID 0 is used by sync_threads, avoid using.
+  warnings.warn("NamedBarrier ID 0 is used by sync_threads, avoid using.")
+gemm: 4096x4096x4096x1/persistent_1cta
+gemm: 4096x4096x4096x1/persistent_2cta
+gemm: 4096x4096x4096x1/heuristic_first_supported
+gemm: 8192x8192x8192x1/nonpersistent_1cta
+gemm: 8192x8192x8192x1/persistent_1cta
+gemm: 8192x8192x8192x1/persistent_2cta
+gemm: 8192x8192x8192x1/heuristic_first_supported
+gemm: 16384x512x4096x1/nonpersistent_1cta
+gemm: 16384x512x4096x1/persistent_1cta
+gemm: 16384x512x4096x1/persistent_2cta
+gemm: 16384x512x4096x1/heuristic_first_supported
+gemm: 32768x512x4096x1/nonpersistent_1cta
+gemm: 32768x512x4096x1/persistent_1cta
+gemm: 32768x512x4096x1/persistent_2cta
+gemm: 32768x512x4096x1/heuristic_first_supported
+gemm: 512x16384x4096x1/nonpersistent_1cta
+gemm: 512x16384x4096x1/persistent_1cta
+gemm: 512x16384x4096x1/persistent_2cta
+gemm: 512x16384x4096x1/heuristic_first_supported
+ncu: 00_ldgsts_s2_bif16
+ncu: 01_tma_s2_bif16
+ncu: 02_tma_s4_bif32
+ncu: 03_ldgsts_s4_bif32
+ncu: 04_ldgsts_s8_bif64
+ncu: 05_tma_s8_bif64
+ncu: 00_umma_1sm_n256_d256
+ncu: 01_umma_2sm_n256_d256
+campaign: complete /workspace/runs/study-20260924T140749Z/campaign-3
+scripts/run_gpu.sh python3 precision_comparison/precision_comparison.py --output runs/study-20260924T140749Z/precision
+run_gpu: GPU 6 (GPU-619f7fdc-5f98-8c37-fe89-0465d6130baf)
+
+==========
+== CUDA ==
+==========
+
+CUDA Version 13.1.0
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+
+precision: 4096x4096x4096x1/bf16 repetition 1/3
+precision: 4096x4096x4096x1/bf16 repetition 2/3
+precision: 4096x4096x4096x1/bf16 repetition 3/3
+precision: 4096x4096x4096x1/bf16 cuBLASLt on the same operand sets
+precision: 4096x4096x4096x1/fp8 repetition 1/3
+precision: 4096x4096x4096x1/fp8 repetition 2/3
+precision: 4096x4096x4096x1/fp8 repetition 3/3
+precision: 4096x4096x4096x1/fp8 cuBLASLt on the same operand sets
+precision: 4096x4096x4096x1/nvfp4 repetition 1/3
+precision: 4096x4096x4096x1/nvfp4 repetition 2/3
+precision: 4096x4096x4096x1/nvfp4 repetition 3/3
+precision: 4096x4096x4096x1/nvfp4 cuBLASLt on the same operand sets
+precision: 8192x8192x8192x1/bf16 repetition 1/3
+precision: 8192x8192x8192x1/bf16 repetition 2/3
+precision: 8192x8192x8192x1/bf16 repetition 3/3
+precision: 8192x8192x8192x1/bf16 cuBLASLt on the same operand sets
+precision: 8192x8192x8192x1/fp8 repetition 1/3
+precision: 8192x8192x8192x1/fp8 repetition 2/3
+precision: 8192x8192x8192x1/fp8 repetition 3/3
+precision: 8192x8192x8192x1/fp8 cuBLASLt on the same operand sets
+precision: 8192x8192x8192x1/nvfp4 repetition 1/3
+precision: 8192x8192x8192x1/nvfp4 repetition 2/3
+precision: 8192x8192x8192x1/nvfp4 repetition 3/3
+precision: 8192x8192x8192x1/nvfp4 cuBLASLt on the same operand sets
+precision: 32768x512x4096x1/bf16 repetition 1/3
+precision: 32768x512x4096x1/bf16 repetition 2/3
+precision: 32768x512x4096x1/bf16 repetition 3/3
+precision: 32768x512x4096x1/bf16 cuBLASLt on the same operand sets
+precision: 32768x512x4096x1/fp8 repetition 1/3
+precision: 32768x512x4096x1/fp8 repetition 2/3
+precision: 32768x512x4096x1/fp8 repetition 3/3
+precision: 32768x512x4096x1/fp8 cuBLASLt on the same operand sets
+precision: 32768x512x4096x1/nvfp4 repetition 1/3
+precision: 32768x512x4096x1/nvfp4 repetition 2/3
+precision: 32768x512x4096x1/nvfp4 repetition 3/3
+precision: 32768x512x4096x1/nvfp4 cuBLASLt on the same operand sets
+/opt/venv/lib/python3.12/site-packages/torch/profiler/profiler.py:217: UserWarning: Warning: Profiler clears events at the end of each cycle.Only events from the current cycle will be reported.To keep events across cycles, set acc_events=True.
+  _warn_once(
+precision: complete /workspace/runs/study-20260924T140749Z/precision
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (4096, 4096, 4096, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: False
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (4096, 4096, 4096, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (4096, 4096, 4096, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (4096, 4096, 4096, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: False
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (4096, 4096, 4096, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (4096, 4096, 4096, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Sm103 Persistent FP4 Ultra Dense BlockScaled GEMM test with:
+mnkl: (4096, 4096, 4096, 1)
+AB dtype: Float4E2M1FN, SF dtype: Float8E4M3FN, SF Vec size: 16
+C dtype: Float32
+Matrix majors - A: k, B: k, C: n
+Mma Tiler (M, N): (256, 128), Cluster Shape (M, N): (2, 1)
+Use TMA Store: True
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: False
+Use cold L2: False
+Verifying results...
+Running Sm103 Persistent FP4 Ultra Dense BlockScaled GEMM test with:
+mnkl: (4096, 4096, 4096, 1)
+AB dtype: Float4E2M1FN, SF dtype: Float8E4M3FN, SF Vec size: 16
+C dtype: Float32
+Matrix majors - A: k, B: k, C: n
+Mma Tiler (M, N): (256, 128), Cluster Shape (M, N): (2, 1)
+Use TMA Store: True
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Sm103 Persistent FP4 Ultra Dense BlockScaled GEMM test with:
+mnkl: (4096, 4096, 4096, 1)
+AB dtype: Float4E2M1FN, SF dtype: Float8E4M3FN, SF Vec size: 16
+C dtype: Float32
+Matrix majors - A: k, B: k, C: n
+Mma Tiler (M, N): (256, 128), Cluster Shape (M, N): (2, 1)
+Use TMA Store: True
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (8192, 8192, 8192, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: False
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (8192, 8192, 8192, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (8192, 8192, 8192, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (8192, 8192, 8192, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: False
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (8192, 8192, 8192, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (8192, 8192, 8192, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Sm103 Persistent FP4 Ultra Dense BlockScaled GEMM test with:
+mnkl: (8192, 8192, 8192, 1)
+AB dtype: Float4E2M1FN, SF dtype: Float8E4M3FN, SF Vec size: 16
+C dtype: Float32
+Matrix majors - A: k, B: k, C: n
+Mma Tiler (M, N): (256, 128), Cluster Shape (M, N): (2, 1)
+Use TMA Store: True
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: False
+Use cold L2: False
+Verifying results...
+Running Sm103 Persistent FP4 Ultra Dense BlockScaled GEMM test with:
+mnkl: (8192, 8192, 8192, 1)
+AB dtype: Float4E2M1FN, SF dtype: Float8E4M3FN, SF Vec size: 16
+C dtype: Float32
+Matrix majors - A: k, B: k, C: n
+Mma Tiler (M, N): (256, 128), Cluster Shape (M, N): (2, 1)
+Use TMA Store: True
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Sm103 Persistent FP4 Ultra Dense BlockScaled GEMM test with:
+mnkl: (8192, 8192, 8192, 1)
+AB dtype: Float4E2M1FN, SF dtype: Float8E4M3FN, SF Vec size: 16
+C dtype: Float32
+Matrix majors - A: k, B: k, C: n
+Mma Tiler (M, N): (256, 128), Cluster Shape (M, N): (2, 1)
+Use TMA Store: True
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (32768, 512, 4096, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: False
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (32768, 512, 4096, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (32768, 512, 4096, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (32768, 512, 4096, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: False
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (32768, 512, 4096, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Blackwell Persistent Dense GEMM test with:
+mnkl: (32768, 512, 4096, 1)
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Sm103 Persistent FP4 Ultra Dense BlockScaled GEMM test with:
+mnkl: (32768, 512, 4096, 1)
+AB dtype: Float4E2M1FN, SF dtype: Float8E4M3FN, SF Vec size: 16
+C dtype: Float32
+Matrix majors - A: k, B: k, C: n
+Mma Tiler (M, N): (256, 128), Cluster Shape (M, N): (2, 1)
+Use TMA Store: True
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: False
+Use cold L2: False
+Verifying results...
+Running Sm103 Persistent FP4 Ultra Dense BlockScaled GEMM test with:
+mnkl: (32768, 512, 4096, 1)
+AB dtype: Float4E2M1FN, SF dtype: Float8E4M3FN, SF Vec size: 16
+C dtype: Float32
+Matrix majors - A: k, B: k, C: n
+Mma Tiler (M, N): (256, 128), Cluster Shape (M, N): (2, 1)
+Use TMA Store: True
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+Running Sm103 Persistent FP4 Ultra Dense BlockScaled GEMM test with:
+mnkl: (32768, 512, 4096, 1)
+AB dtype: Float4E2M1FN, SF dtype: Float8E4M3FN, SF Vec size: 16
+C dtype: Float32
+Matrix majors - A: k, B: k, C: n
+Mma Tiler (M, N): (256, 128), Cluster Shape (M, N): (2, 1)
+Use TMA Store: True
+Tolerance: 0.1
+Warmup iterations: 5
+Iterations: 20
+Skip reference checking: True
+Use cold L2: False
+scripts/run_gpu.sh python3 scripts/profile_gemm.py --cache-state hot --output runs/study-20260924T140749Z/gemm-profile-hot
+run_gpu: GPU 6 (GPU-619f7fdc-5f98-8c37-fe89-0465d6130baf)
+
+==========
+== CUDA ==
+==========
+
+CUDA Version 13.1.0
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+
+profile: calibration: ncu --clock-control none --pipeline-boost-state dynamic --cache-control none --replay-mode application --devices 0 --kernel-name-base function --kernel-name tma_benchmark_kernel --launch-count 1 --print-summary none --metrics dram__bytes_read.sum,dram__bytes_write.sum,l1tex__m_xbar2l1tex_read_bytes_mem_global_op_tma_ld.sum -o /workspace/runs/study-20260924T140749Z/gemm-profile-hot/calibration_tma_stream -- build/memory_paths/tma --stages 4 --bytes-in-flight-kib 64 --run-kind benchmark --working-set-mib 512 --passes 32 --warmup-ms 0 --repetitions 1
+profile: L2 read metric l1tex__m_xbar2l1tex_read_bytes_mem_global_op_tma_ld.sum: collected
+profile: 00_4096x4096x4096_persistent_2cta: ncu --clock-control none --pipeline-boost-state dynamic --cache-control none --replay-mode application --devices 0 --nvtx --nvtx-include gb300_gemm_profile/ --kernel-name-base function --print-summary none --metrics dram__bytes_read.sum,dram__bytes_write.sum,gpu__time_duration.sum,sm__cycles_elapsed.avg.per_second,l1tex__m_xbar2l1tex_read_bytes_mem_global_op_tma_ld.sum -o /workspace/runs/study-20260924T140749Z/gemm-profile-hot/00_4096x4096x4096_persistent_2cta -- /opt/venv/bin/python3 /workspace/scripts/profile_gemm.py --worker --shape 4096,4096,4096 --variant persistent_2cta --result /workspace/runs/study-20260924T140749Z/gemm-profile-hot/00_4096x4096x4096_persistent_2cta.worker.json
+profile: 01_4096x4096x4096_heuristic_first_supported: ncu --clock-control none --pipeline-boost-state dynamic --cache-control none --replay-mode application --devices 0 --nvtx --nvtx-include gb300_gemm_profile/ --kernel-name-base function --print-summary none --metrics dram__bytes_read.sum,dram__bytes_write.sum,gpu__time_duration.sum,sm__cycles_elapsed.avg.per_second,l1tex__m_xbar2l1tex_read_bytes_mem_global_op_tma_ld.sum -o /workspace/runs/study-20260924T140749Z/gemm-profile-hot/01_4096x4096x4096_heuristic_first_supported -- /opt/venv/bin/python3 /workspace/scripts/profile_gemm.py --worker --shape 4096,4096,4096 --variant heuristic_first_supported --result /workspace/runs/study-20260924T140749Z/gemm-profile-hot/01_4096x4096x4096_heuristic_first_supported.worker.json
+profile: 02_8192x8192x8192_persistent_2cta: ncu --clock-control none --pipeline-boost-state dynamic --cache-control none --replay-mode application --devices 0 --nvtx --nvtx-include gb300_gemm_profile/ --kernel-name-base function --print-summary none --metrics dram__bytes_read.sum,dram__bytes_write.sum,gpu__time_duration.sum,sm__cycles_elapsed.avg.per_second,l1tex__m_xbar2l1tex_read_bytes_mem_global_op_tma_ld.sum -o /workspace/runs/study-20260924T140749Z/gemm-profile-hot/02_8192x8192x8192_persistent_2cta -- /opt/venv/bin/python3 /workspace/scripts/profile_gemm.py --worker --shape 8192,8192,8192 --variant persistent_2cta --result /workspace/runs/study-20260924T140749Z/gemm-profile-hot/02_8192x8192x8192_persistent_2cta.worker.json
+profile: 03_8192x8192x8192_heuristic_first_supported: ncu --clock-control none --pipeline-boost-state dynamic --cache-control none --replay-mode application --devices 0 --nvtx --nvtx-include gb300_gemm_profile/ --kernel-name-base function --print-summary none --metrics dram__bytes_read.sum,dram__bytes_write.sum,gpu__time_duration.sum,sm__cycles_elapsed.avg.per_second,l1tex__m_xbar2l1tex_read_bytes_mem_global_op_tma_ld.sum -o /workspace/runs/study-20260924T140749Z/gemm-profile-hot/03_8192x8192x8192_heuristic_first_supported -- /opt/venv/bin/python3 /workspace/scripts/profile_gemm.py --worker --shape 8192,8192,8192 --variant heuristic_first_supported --result /workspace/runs/study-20260924T140749Z/gemm-profile-hot/03_8192x8192x8192_heuristic_first_supported.worker.json
+profile: 04_32768x512x4096_persistent_2cta: ncu --clock-control none --pipeline-boost-state dynamic --cache-control none --replay-mode application --devices 0 --nvtx --nvtx-include gb300_gemm_profile/ --kernel-name-base function --print-summary none --metrics dram__bytes_read.sum,dram__bytes_write.sum,gpu__time_duration.sum,sm__cycles_elapsed.avg.per_second,l1tex__m_xbar2l1tex_read_bytes_mem_global_op_tma_ld.sum -o /workspace/runs/study-20260924T140749Z/gemm-profile-hot/04_32768x512x4096_persistent_2cta -- /opt/venv/bin/python3 /workspace/scripts/profile_gemm.py --worker --shape 32768,512,4096 --variant persistent_2cta --result /workspace/runs/study-20260924T140749Z/gemm-profile-hot/04_32768x512x4096_persistent_2cta.worker.json
+profile: 05_32768x512x4096_heuristic_first_supported: ncu --clock-control none --pipeline-boost-state dynamic --cache-control none --replay-mode application --devices 0 --nvtx --nvtx-include gb300_gemm_profile/ --kernel-name-base function --print-summary none --metrics dram__bytes_read.sum,dram__bytes_write.sum,gpu__time_duration.sum,sm__cycles_elapsed.avg.per_second,l1tex__m_xbar2l1tex_read_bytes_mem_global_op_tma_ld.sum -o /workspace/runs/study-20260924T140749Z/gemm-profile-hot/05_32768x512x4096_heuristic_first_supported -- /opt/venv/bin/python3 /workspace/scripts/profile_gemm.py --worker --shape 32768,512,4096 --variant heuristic_first_supported --result /workspace/runs/study-20260924T140749Z/gemm-profile-hot/05_32768x512x4096_heuristic_first_supported.worker.json
+profile: complete /workspace/runs/study-20260924T140749Z/gemm-profile-hot
+python3 analysis/analyze.py --study runs/study-20260924T140749Z --output runs/study-20260924T140749Z/analysis
+analysis: complete runs/study-20260924T140749Z/analysis
