@@ -227,8 +227,8 @@ def profile(output, cache_state):
         raise RuntimeError("the two implementations of a shape were profiled on different operands")
 
     record.update({"metrics": list(metrics), "l2_read_metric": calibration,
-                   "captures": [case for case, _, _ in CASES],
-                   "completed_utc": metadata.utc_now()})
+                   "captures": [case for case, _, _ in CASES]})
+    metadata.complete(record)
     (directory / "metadata.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(f"profile: complete {directory}", file=sys.stderr)
 

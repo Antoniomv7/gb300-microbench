@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Compute every published summary and figure from the raw measurements.
 
-Experiments I–IV: the median of each configuration within a campaign, then the mean, sample
-standard deviation and coefficient of variation across three independent campaigns.
+Experiments I–III: the median of 30 launches per configuration within each campaign.
+Experiment IV: the mean time of ten launches per candidate within each campaign.
+The three campaigns give the mean, sample standard deviation and coefficient of variation.
 Experiment V: the same statistics over the three repetitions of each shape and format.
 GEMM traffic profile: Nsight Compute counters relative to the compulsory operand bytes.
 
@@ -73,10 +74,44 @@ def write_csv(path, rows):
                              for key, value in row.items()})
 
 
+def read_metadata(directory, profile=False):
+    """Require a completed acquisition from clean sources; accept the published archive too."""
+    path = directory / "metadata.json"
+    if profile and not path.exists():
+        path = directory / "index.json"  # The published profile's completion record.
+    record = json.loads(path.read_text(encoding="utf-8"))
+    complete = (record["state"] == "COMPLETE" if "state" in record
+                else bool(record.get("completed_utc")))
+    if not complete:
+        raise ValueError(f"{directory}: the acquisition did not complete")
+    if "environment" in record:
+        environment = record["environment"]
+        repository = environment.get("repository", {})
+        commit = repository.get("commit")
+        dirty = any(not line.startswith("??")
+                    for line in repository.get("status", ["missing source status"]))
+    else:
+        environment, commit, dirty = record, record.get("git_commit"), record.get("git_dirty")
+    gpu = environment.get("gpu", {}).get("uuid")
+    if not commit or not gpu or dirty is not False:
+        raise ValueError(f"{directory}: missing GPU/source identity or modified tracked sources")
+    return {**record, "source_commit": commit, "gpu_uuid": gpu}
+
+
+def same_acquisition(records):
+    """Every input, including precision, profiling and a supplied timing summary, must agree."""
+    identities = {(record.get("gpu_uuid"), record.get("source_commit")) for record in records}
+    if len(identities) != 1 or any(not gpu or not commit for gpu, commit in identities):
+        raise ValueError("the inputs must share one GPU and one source commit")
+    gpu, commit = next(iter(identities))
+    return {"gpu_uuid": gpu, "source_commit": commit}
+
+
 # Experiments I–IV ------------------------------------------------------------------------------
 
 def load_campaign(path):
     """One campaign's validated samples, clock telemetry and Nsight Compute counters."""
+    metadata = read_metadata(path)
     data = {}
     for experiment, expected in EXPECTED_ROWS.items():
         rows = read_csv(path / "raw" / f"{experiment}.csv")
@@ -87,18 +122,16 @@ def load_campaign(path):
     profile = json.loads((path / "ncu/index.json").read_text(encoding="utf-8"))
     if sorted(case["case"] for case in profile["cases"]) != NCU_CASES:
         raise ValueError(f"{path}: expected the Nsight Compute captures {NCU_CASES}")
-    metadata = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
-    return {"path": path, "gpu": metadata["gpu"]["uuid"], "data": data, "profile": profile,
+    return {"path": path, "metadata": metadata, "data": data, "profile": profile,
             "telemetry": read_csv(path / "raw/umma_device_scaling_telemetry.csv")}
 
 
 def load_campaigns(paths):
-    """Three distinct complete campaigns, all measured on the same GPU."""
+    """Three distinct complete campaigns, measured on one GPU from one source commit."""
     campaigns = [load_campaign(Path(path).resolve()) for path in paths]
-    if len({campaign["path"] for campaign in campaigns}) != 3:
+    if len(campaigns) != 3 or len({campaign["path"] for campaign in campaigns}) != 3:
         raise ValueError("three distinct campaigns are required")
-    if len({campaign["gpu"] for campaign in campaigns}) != 1:
-        raise ValueError("the campaigns ran on different GPUs")
+    same_acquisition([campaign["metadata"] for campaign in campaigns])
     return campaigns
 
 
@@ -322,6 +355,7 @@ def gemm_results(records):
 
 def load_precision(path):
     """The per-repetition timings, validation records and cuBLASLt plans of a precision run."""
+    metadata = read_metadata(path)
     repetitions = [{**row, "shape_index": int(row["shape_index"]),
                     "repetition": int(row["repetition"]),
                     "kernel_time_us": float(row["kernel_time_us"]), "tflops": float(row["tflops"])}
@@ -330,7 +364,11 @@ def load_precision(path):
                    "bit_exact": row["bit_exact"] == "True"}
                   for row in read_csv(path / "raw/validation.csv")]
     plans = json.loads((path / "raw/cublaslt_plans.json").read_text(encoding="utf-8"))
-    return repetitions, validation, plans
+    operands = [{key: value == "True" if key == "represented_exactly" or
+                 key.endswith("_bytes_identical_to_cutedsl") else value
+                 for key, value in row.items()} for row in read_csv(path / "raw/operands.csv")]
+    precision.check_records(repetitions, validation, operands, plans)
+    return repetitions, validation, plans, metadata
 
 
 def configuration(record):
@@ -431,8 +469,10 @@ def precision_comparison_results(repetitions, validation, plans):
 
 # GEMM traffic profile --------------------------------------------------------------------------
 
-def gemm_profile_results(directory, cache_state, gemm_summary):
+def gemm_profile_results(directory, cache_state, gemm_summary, metadata):
     """DRAM and L2 traffic of the six profiled launches beside their CUDA-event timing."""
+    if cache_state != metadata.get("cache_state"):
+        raise ValueError(f"{directory}: the requested cache state differs from the acquisition")
     reference = {(row["shape_id"], row["variant"]): row for row in read_csv(gemm_summary)}
     rows = []
     for case, shape, variant in profile_gemm.CASES:
@@ -443,11 +483,17 @@ def gemm_profile_results(directory, cache_state, gemm_summary):
         metrics = (*profile_gemm.DRAM_METRICS, *profile_gemm.TIMING_METRICS,
                    *((l2_metric,) if l2_metric else ()))
         kernels, units = ncu_capture.parse_kernels(text, metrics)
-        if len(kernels) != 1:
-            raise ValueError(f"{case}: expected one profiled kernel, found {len(kernels)}")
+        if len(kernels) != 1 or not kernels[0]["name"] or \
+                profile_gemm.NVTX_RANGE not in kernels[0]["nvtx_ranges"]:
+            raise ValueError(f"{case}: expected one named kernel inside the NVTX range")
         values = kernels[0]["metrics"]
+        if any(not math.isfinite(value) or value < 0 for value in values.values()) or \
+                any(values[metric] <= 0 for metric in profile_gemm.TIMING_METRICS):
+            raise ValueError(f"{case}: invalid counter, duration or SM clock")
         validation = json.loads((directory / f"{case}.worker.json").read_text(
             encoding="utf-8"))["validation"]
+        if validation["first_launch"] != "PASS" or validation["after_profiled_launch"] != "PASS":
+            raise ValueError(f"{case}: the profiled launch failed numerical validation")
         m, n, k, batch = shape
         compulsory = 2 * m * k * batch + 2 * n * k * batch  # BF16 A and B
         output_bytes = 4 * m * n * batch  # FP32 D
@@ -461,10 +507,9 @@ def gemm_profile_results(directory, cache_state, gemm_summary):
         rows.append({
             "shape_id": profile_gemm.shape_id(shape), "m": m, "n": n, "k": k, "l": batch,
             "variant": variant, "method": "cutedsl" if variant == "persistent_2cta" else "cublaslt",
-            # A failed capture stops the profile, so every exported capture passed its checks.
+            # Acquisition completion and the exported capture were both checked above.
             "cache_state": cache_state, "status": "PASS", "kernel_name": kernels[0]["name"],
-            "validation": "PASS" if validation["first_launch"] == "PASS" and
-                                    validation["after_profiled_launch"] == "PASS" else "FAIL",
+            "validation": "PASS",
             "dram_read_bytes": read, "dram_write_bytes": write,
             "compulsory_read_bytes": compulsory, "dram_read_to_compulsory": read / compulsory,
             "dram_read_excess_bytes": read - compulsory, "output_bytes": output_bytes,
@@ -505,10 +550,24 @@ def main():
     if args.gemm_profile and not (args.cache_state and (args.campaigns or args.gemm_summary)):
         parser.error("--gemm-profile needs --cache-state and --campaigns or --gemm-summary")
 
+    campaigns = load_campaigns(args.campaigns) if args.campaigns else []
+    precision_data = load_precision(args.precision) if args.precision else None
+    profile_metadata = read_metadata(args.gemm_profile, profile=True) if args.gemm_profile else None
+    records = [campaign["metadata"] for campaign in campaigns]
+    if precision_data:
+        records.append(precision_data[3])
+    if profile_metadata:
+        records.append(profile_metadata)
+    if args.gemm_profile and args.gemm_summary:
+        manifest = args.gemm_summary.parent / "metadata.json"
+        if not manifest.exists():
+            manifest = args.gemm_summary.parent / "analysis.json"  # Published archive.
+        records.append(json.loads(manifest.read_text(encoding="utf-8")))
+    identity = same_acquisition(records)
+
     output = args.output
     output.mkdir(parents=True, exist_ok=False)
     if args.campaigns:
-        campaigns = load_campaigns(args.campaigns)
         for name, results, figure in (
                 ("memory_paths", memory_results, figures.memory_figure),
                 ("umma_throughput", umma_results, figures.umma_figure),
@@ -518,7 +577,7 @@ def main():
             write_csv(output / f"{name}.csv", rows)
             (output / f"{name}.svg").write_text(figure(summary), encoding="utf-8")
     if args.precision:
-        repetitions, validation, plans = load_precision(args.precision)
+        repetitions, validation, plans, _ = precision_data
         rows = precision_results(repetitions, validation)
         write_csv(output / "precision_comparison.csv", rows)
         (output / "precision_comparison.svg").write_text(figures.precision_figure(rows),
@@ -530,13 +589,14 @@ def main():
                                                 precision.ITERATIONS), encoding="utf-8")
     if args.gemm_profile:
         rows = gemm_profile_results(args.gemm_profile, args.cache_state,
-                                    args.gemm_summary or output / "gemm_comparison.csv")
+                                    args.gemm_summary or output / "gemm_comparison.csv",
+                                    profile_metadata)
         # Unlike the other summaries, this table keeps Python's full float representation.
         with (output / "gemm_profile.csv").open("w", newline="", encoding="utf-8") as destination:
             writer = csv.DictWriter(destination, fieldnames=list(rows[0]), lineterminator="\n")
             writer.writeheader()
             writer.writerows(rows)
-    record = {"created_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+    record = {**identity, "created_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
               "campaigns": args.campaigns, "precision": args.precision,
               "gemm_profile": args.gemm_profile, "cache_state": args.cache_state,
               "gemm_summary": args.gemm_summary}

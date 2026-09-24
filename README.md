@@ -141,13 +141,14 @@ make exp1-memory     # or exp2-umma, exp3-scaling, exp4-gemm, precision
 compute processes. It exposes only that GPU to the container, as device 0. Every target compiles
 as needed and writes one new directory `runs/<target>-<UTC>/`, never an existing one. A run
 keeps its samples and validation records in `raw/` and its Nsight Compute reports and CSV exports
-beside them. Its `metadata.json`, written only when the run completes, records the Git commit and
-whether tracked files were modified, the GPU and driver, the CUDA, Nsight Compute, CUTLASS and
-Python package versions, the parameters and UTC timestamps.
+beside them. Acquisition requires committed sources and checks that the commit is unchanged at
+completion. Its `metadata.json`, written only when the run completes, records the clean Git commit,
+the GPU and driver, the CUDA, Nsight Compute, CUTLASS and Python package versions, the parameters
+and UTC timestamps.
 
-Experiments I–IV report per-launch samples; their published summaries need three campaigns (see
-[Statistics](#statistics)). `make precision` also writes its two summaries and figures to
-`analysis/` inside its run directory.
+Experiments I–III report per-launch samples; Experiment IV reports one mean launch time per
+candidate and shape. Their published summaries need three campaigns (see [Statistics](#statistics)).
+`make precision` also writes its two summaries and figures to `analysis/` inside its run directory.
 
 ### The complete study
 
@@ -175,11 +176,12 @@ Use `make final-study 2>&1 | tee study.log` to keep a log. The underlying target
   II and III use small integer operands, whose FP32 accumulation is exact, and compare every
   accumulator element. Experiment IV compares every candidate with the IEEE-FP32 reference
   (|error| ≤ 0.1 + 10⁻⁵·|reference|).
-- **Every Experiment V output.** The outputs of all repetitions, CuTe DSL and cuBLASLt, before and
-  after timing, are compared with the IEEE-FP32 product of the dequantized operands. The absolute
-  tolerance is 0.1; the relative tolerance is 10⁻³ for BF16 and FP8 and 10⁻² for NVFP4. A negative
-  control first confirms that the check rejects a perturbed value. The run fails if any check,
-  operand-byte comparison or cuBLASLt algorithm condition fails.
+- **Every Experiment V repetition.** CuTe DSL validates an initial launch per shape and format;
+  all retained repetition outputs are checked after the example runs. cuBLASLt validates before
+  and after each timed repetition. Both are compared with the IEEE-FP32 product of the dequantized
+  operands. The absolute tolerance is 0.1; the relative tolerance is 10⁻³ for BF16 and FP8 and 10⁻²
+  for NVFP4. A negative control confirms that the check rejects a perturbed value. The run fails
+  if any check, operand-byte comparison or cuBLASLt algorithm condition fails.
 - **Complete data.** A campaign keeps an experiment's samples only if every configuration produced
   its full set: 540 memory, 720 UMMA, 120 scaling and 20 GEMM rows. CUDA calls are checked
   throughout.
@@ -188,14 +190,20 @@ Use `make final-study 2>&1 | tee study.log` to keep a log. The underlying target
 - **Profiling apart from timing.** Nsight Compute runs after the timed launches, or in separate
   processes, and never changes a timing.
 - **Isolation.** The GPU must be idle, and existing run directories are never overwritten.
+- **Saved-data validation.** Analysis requires completed runs from clean sources and one GPU and
+  source commit across all inputs. Experiment V rechecks the complete sets of repetitions,
+  validation records, identical operand bytes (including NVFP4 scales) and cuBLASLt plans.
+  A standalone GEMM profile requires its timing summary's adjacent analysis metadata.
 
 ## Statistics
 
-For Experiments I–IV, each campaign first reduces the 30 launches of a configuration to their
-median. The three independent campaigns then give a mean, a sample standard deviation and a
-coefficient of variation (CV); the CSVs keep the three campaign values. Ratios such as TMA/LDGSTS
-or scaling efficiency are computed within each campaign and then averaged. Experiment V reports the
-mean, sample standard deviation and CV of its three repetitions. All statistics are descriptive.
+For Experiments I–III, each campaign reduces the 30 launches of a configuration to their median.
+Experiment IV times a block of ten launches with CUDA events and divides by ten to obtain the mean
+launch time, then computes throughput from that time. For Experiments I–IV, the three independent
+campaigns give a mean, a sample standard deviation and a coefficient of variation (CV); the CSVs
+keep the three campaign values. Ratios such as TMA/LDGSTS or scaling efficiency are computed within
+each campaign and then averaged. Experiment V reports the mean, sample standard deviation and CV
+of its three repetitions. All statistics are descriptive.
 The largest CV among the Experiment I–IV summaries is 1.6%.
 
 ## Published results
@@ -340,11 +348,11 @@ from full-precision values. New runs store full precision, so their summaries re
 
 - `tfm-acquisition` (commit `6868f00`): the exact code that acquired the published study; the
   archive records this commit.
-- `tfm-final`: the cleaned repository. The cleanup removed workflow infrastructure only:
-  per-file source hashes, manifests, state files and a separate checker of saved runs, replaced
-  by Git history and one small `metadata.json` per run. It did not change the kernels,
-  parameters, timing, validation, statistics or published results. For new runs, a study writes
-  all thirteen summaries to its `analysis/` directory, and Experiment V's raw tables keep full
-  float precision.
+- `tfm-final`: the thesis release on `main`, with separate acquisition, analysis and figure code.
+  Git commits and per-run metadata identify the sources and experimental context; acquisition
+  and analysis enforce the validation requirements above. The kernels, measurement parameters,
+  timing, statistical calculations and published results match the acquisition version. A new
+  study writes all thirteen summaries to its `analysis/` directory, and Experiment V's raw tables
+  keep full float precision. Cite this tag and its resolved commit for the thesis repository.
 
 BSD 3-Clause; see `LICENSE`.

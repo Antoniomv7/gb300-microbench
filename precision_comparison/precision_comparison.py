@@ -113,31 +113,56 @@ def write_table(path, fields, rows):
         writer.writerows(rows)
 
 
-def check(cublaslt):
-    """Refuse the run unless both implementations were compared on equal terms everywhere."""
+def check_records(repetitions, validation, operands, plans):
+    """Check the same evidence during acquisition and CPU-only reconstruction."""
     problems = []
-    expected = 2 * REPETITIONS * len(SHAPES) * len(FORMATS)
-    if len(cublaslt.repetitions) != expected:
-        problems.append(f"{len(cublaslt.repetitions)} repetition records, expected {expected}")
-    for record in cublaslt.validation:
+    configurations = {(index, "x".join(map(str, shape)), name)
+                      for index, shape in enumerate(SHAPES) for name in FORMATS}
+    sets = ("validated", *(f"timed_{index}" for index in range(1, REPETITIONS + 1)))
+
+    def require_keys(records, fields, expected, label):
+        keys = [(int(row["shape_index"]), row["shape_id"], row["precision"],
+                 *(row[field] for field in fields)) for row in records]
+        if len(keys) != len(expected) or set(keys) != expected:
+            problems.append(f"{label}: missing, duplicate or unexpected configuration records")
+
+    require_keys(repetitions, ("implementation", "repetition", "operand_set"),
+                 {(*key, method, index, f"timed_{index}") for key in configurations
+                  for method in IMPLEMENTATIONS for index in range(1, REPETITIONS + 1)},
+                 "repetitions")
+    stages = {("cutedsl", "after_example_run", name) for name in sets} | \
+             {("cublaslt", "before_timing", name) for name in sets} | \
+             {("cublaslt", "after_timing", name) for name in sets[1:]}
+    require_keys(validation, ("implementation", "stage", "operand_set"),
+                 {(*key, *stage) for key in configurations for stage in stages}, "validation")
+    require_keys(operands, ("operand_set",),
+                 {(*key, name) for key in configurations for name in sets}, "operands")
+    require_keys(plans, (), configurations, "cuBLASLt plans")
+    for record in repetitions:
+        if record["validation"] != "PASS" or any(
+                not math.isfinite(record[field]) or record[field] <= 0
+                for field in ("kernel_time_us", "tflops")):
+            problems.append("a timed repetition failed validation or has an invalid measurement")
+    for record in validation:
         if record["status"] != "PASS":
             problems.append(f"{record['shape_id']}/{record['precision']}/{record['operand_set']}: "
                             f"{record['implementation']} failed validation at {record['stage']}")
-    for record in cublaslt.operands:
+    for record in operands:
         # cuBLASLt must consume the very bytes, NVFP4 block scales included, that CuTe DSL did.
         names = ("a", "b", "a_scale", "b_scale") if record["precision"] == "nvfp4" else ("a", "b")
-        if not (record["represented_exactly"] and
-                all(record[f"{name}_bytes_identical_to_cutedsl"] for name in names)):
+        if not (record["represented_exactly"] is True and
+                all(record[f"{name}_bytes_identical_to_cutedsl"] is True for name in names)):
             problems.append(f"{record['shape_id']}/{record['precision']}/{record['operand_set']}: "
                             "cuBLASLt operands differ from the CuTe DSL operand bytes")
-    for plan in cublaslt.plans:
+    for plan in plans:
         # One algorithm for every operand set, accepted by cublasLtMatmulAlgoCheck for FP32 output.
-        if (plan["algorithm"]["check_status"] != 0 or not plan["same_algorithm_for_every_set"]
-                or not plan["identification_algorithm_matches"]):
+        if (plan["algorithm"]["check_status"] != 0 or
+                plan["same_algorithm_for_every_set"] is not True or
+                plan["identification_algorithm_matches"] is not True):
             problems.append(f"{plan['shape_id']}/{plan['precision']}: the cuBLASLt algorithm "
                             "changed or failed cublasLtMatmulAlgoCheck")
     if problems:
-        raise RuntimeError("; ".join(problems))
+        raise ValueError("; ".join(problems))
 
 
 def main():
@@ -169,7 +194,7 @@ def main():
     write_table(raw / "operands.csv", OPERAND_FIELDS, cublaslt.operands)
     (raw / "cublaslt_plans.json").write_text(json.dumps(cublaslt.plans, indent=2) + "\n",
                                              encoding="utf-8")
-    check(cublaslt)
+    check_records(cublaslt.repetitions, cublaslt.validation, cublaslt.operands, cublaslt.plans)
     record.update({
         "parameters": {
             "shapes": ["x".join(map(str, shape)) for shape in SHAPES], "formats": list(FORMATS),
@@ -180,8 +205,8 @@ def main():
                            in cublaslt_precision.TOLERANCES.items()},
             "cublaslt_workspace_limit_bytes": cublaslt_precision.WORKSPACE_LIMIT_BYTES,
             "cublaslt_requested_algorithms": cublaslt_precision.REQUESTED_ALGORITHMS},
-        "cublaslt_version": cublaslt.bridge.version(),
-        "completed_utc": metadata.utc_now()})
+        "cublaslt_version": cublaslt.bridge.version()})
+    metadata.complete(record)
     (output / "metadata.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(f"precision: complete {output}", file=sys.stderr)
 

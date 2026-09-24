@@ -28,8 +28,22 @@ def line_containing(text, word):
     return next(line.strip() for line in text.splitlines() if word in line)
 
 
+def source_commit():
+    """Require committed sources before acquisition and again before marking it complete."""
+    if output("git", "status", "--porcelain", "--untracked-files=no"):
+        raise ValueError("commit the modified tracked files before acquiring measurements")
+    return output("git", "rev-parse", "HEAD")
+
+
+def complete(record):
+    if source_commit() != record["git_commit"]:
+        raise ValueError("the source commit changed during acquisition")
+    record["completed_utc"] = utc_now()
+
+
 def environment():
     """Source commit, GPU, CUDA, Nsight Compute, CUTLASS and Python package versions."""
+    commit = source_commit()
     # run_gpu.sh exposes one physical GPU to the container and names it here.
     gpu = os.environ.get("BLACKWELL_GPU_UUID", "0")
     values = next(csv.reader([output("nvidia-smi", "-i", gpu,
@@ -42,9 +56,7 @@ def environment():
         except importlib.metadata.PackageNotFoundError:
             packages[package] = None
     return {
-        "git_commit": output("git", "rev-parse", "HEAD"),
-        # Only modified tracked files count; runs/ and build/ are untracked.
-        "git_dirty": bool(output("git", "status", "--porcelain", "--untracked-files=no")),
+        "git_commit": commit, "git_dirty": False,
         "gpu": {field.replace(".", "_"): value.strip() for field, value in zip(GPU_FIELDS, values)},
         "cuda_toolkit": line_containing(output("nvcc", "--version"), "release"),
         "nsight_compute": line_containing(output("ncu", "--version"), "Version"),

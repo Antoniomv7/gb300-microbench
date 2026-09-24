@@ -145,7 +145,7 @@ def main():
     if cases:
         ncu_capture.capture(directory, cases)
     record["ncu_cases"] = [case["case"] for case in cases]
-    record["completed_utc"] = metadata.utc_now()
+    metadata.complete(record)
     (directory / "metadata.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(f"campaign: complete {directory}", file=sys.stderr)
 
