@@ -204,45 +204,60 @@ campaigns give a mean, a sample standard deviation and a coefficient of variatio
 keep the three campaign values. Ratios such as TMA/LDGSTS or scaling efficiency are computed within
 each campaign and then averaged. Experiment V reports the mean, sample standard deviation and CV
 of its three repetitions. All statistics are descriptive.
-The largest CV among the Experiment I–IV summaries is 1.6%.
+The largest CV among the Experiment I–IV summaries is 0.8%.
 
 ## Published results
 
-`results/` holds the summaries and figures of study `study-20260923T173150Z`, measured on GPU
-`GPU-619f7fdc-5f98-8c37-fe89-0465d6130baf` with the code at tag `tfm-acquisition`. The figures
-show means; whiskers show the range of the three campaigns or repetitions. The results describe
-this GPU, software and configuration grid, not architectural peak specifications.
+`results/` holds the CSV summaries and SVG/PDF figures from the final study
+`study-20260924T140749Z`, measured on GPU
+`GPU-619f7fdc-5f98-8c37-fe89-0465d6130baf`. The complete console log is tracked as
+[`study-20260924T140749Z.log`](study-20260924T140749Z.log). Figures show means; whiskers show
+the range of the three campaigns or repetitions. These measurements characterize this GPU,
+software stack and configuration grid; they are not architectural peak specifications.
+
+### Key findings
+
+| Mechanism | Main observation |
+|---|---|
+| Global-to-shared movement | LDGSTS is faster than TMA in 8/9 tested configurations; both peak near 7.0 TB/s effective rate at 4 stages and 64 KiB in flight. |
+| UMMA issue throughput | The best one-SM case reaches 8,101 FLOP/cycle/SM; a two-SM work unit delivers 1.982× the one-SM total throughput. |
+| Device scaling | Two-SM work units reach 2,119.9 TFLOP/s across 148 SMs, with 93.2% raw and 98.1% clock-normalized scaling efficiency. |
+| BF16 GEMM | The persistent 2-CTA CuTe DSL kernel is the fastest CuTe variant for every tested shape, reaching 50.3–95.0% of the corresponding cuBLASLt throughput. |
+| Low precision | Relative to the CuTe DSL BF16 kernel, FP8 reaches up to 2.27× and NVFP4 up to 3.97× higher throughput on the tested shapes. |
+| GEMM traffic diagnostic | For the two shapes with the largest BF16 performance gaps, the CuTe DSL kernel also produces substantially more hot-cache DRAM traffic than cuBLASLt; the counters show correlation, not causation. |
 
 ### I. HBM-to-shared-memory paths
 
 ![Effective transfer rate for LDGSTS and TMA](results/memory_paths.svg)
 
 LDGSTS reaches the higher effective rate in **8 of 9** stage and in-flight-byte configurations.
-The highest means are **7,024 GB/s** for LDGSTS and **6,964 GB/s** for TMA, both at four stages
-and 64 KiB in flight. At two stages and 64 KiB, TMA is marginally higher: 6,954 versus
-6,943 GB/s. More bytes in flight help both paths in this grid, while eight stages reduce
-throughput substantially, most for TMA. The DRAM counters read 1.00 bytes per useful byte in all
-six captured configurations. Source: [`results/memory_paths.csv`](results/memory_paths.csv).
+The highest means are **7,024.5 GB/s** for LDGSTS and **6,964.2 GB/s** for TMA, both at four stages
+and 64 KiB in flight. At two stages and 64 KiB, TMA is marginally higher: **6,954.6 versus
+6,951.8 GB/s**. More bytes in flight help both paths in this grid, while eight stages reduce
+throughput substantially, most strongly for TMA. The DRAM counters read approximately one byte
+per useful byte in all six captured configurations. Source:
+[`results/memory_paths.csv`](results/memory_paths.csv).
 
 ### II–III. UMMA instruction throughput and device scaling
 
 ![Isolated BF16 UMMA throughput](results/umma_throughput.svg)
 
 At N = 256 and depth 256, the isolated one-SM kernel reaches **8,101 FLOP/cycle/SM**, a modeled
-**16.372 TFLOP/s/SM** at the measured clock. The two-SM kernel reaches **8,028 FLOP/cycle/SM**,
-**1.982×** the total throughput of the one-SM kernel.
+**16.377 TFLOP/s/SM** at the measured clock. The two-SM kernel reaches **8,028 FLOP/cycle/SM**,
+or **1.982×** the total throughput of the one-SM kernel.
 
 ![BF16 UMMA scaling to 148 SMs](results/umma_device_scaling.svg)
 
 | Execution | Active SMs | Mean throughput | Scaling efficiency | Clock-normalized efficiency |
 |---|---:|---:|---:|---:|
-| One-SM work units | 148 | 2,103.7 TFLOP/s | 91.7% | 96.9% |
-| Two-SM work units | 148 | 2,119.7 TFLOP/s | 93.3% | 98.1% |
+| One-SM work units | 148 | 2,104.1 TFLOP/s | 91.7% | 97.3% |
+| Two-SM work units | 148 | 2,119.9 TFLOP/s | 93.2% | 98.1% |
 
 Two-SM work units deliver about **0.8%** more device throughput. The isolated units ran at the
-2,032 MHz maximum clock, the whole device at about 1,922–1,931 MHz. The gap between raw and
-clock-normalized efficiency is why a fixed-clock extrapolation from one SM overstates the scaling
-loss. Sources: [`results/umma_throughput.csv`](results/umma_throughput.csv),
+2,032 MHz maximum clock; the device-scale measurements averaged about **1,915 MHz** for one-SM
+work units and **1,931 MHz** for two-SM work units. The gap between raw and clock-normalized
+efficiency shows why a fixed-clock extrapolation from one SM overstates the scaling loss.
+Sources: [`results/umma_throughput.csv`](results/umma_throughput.csv) and
 [`results/umma_device_scaling.csv`](results/umma_device_scaling.csv).
 
 ### IV. BF16 GEMM implementation and shape
@@ -251,14 +266,15 @@ loss. Sources: [`results/umma_throughput.csv`](results/umma_throughput.csv),
 
 | GEMM shape (M × N × K) | Persistent 2-CTA CuTe DSL | cuBLASLt | CuTe DSL / cuBLASLt |
 |---|---:|---:|---:|
-| 4096 × 4096 × 4096 | 1,679.7 TFLOP/s | 1,754.6 TFLOP/s | 95.7% |
-| 8192 × 8192 × 8192 | 1,450.5 TFLOP/s | 2,111.2 TFLOP/s | 68.7% |
-| 16384 × 512 × 4096 | 812.7 TFLOP/s | 1,435.6 TFLOP/s | 56.6% |
-| 32768 × 512 × 4096 | 756.9 TFLOP/s | 1,509.8 TFLOP/s | 50.1% |
-| 512 × 16384 × 4096 | 1,269.8 TFLOP/s | 1,498.9 TFLOP/s | 84.7% |
+| 4096 × 4096 × 4096 | 1,671.6 TFLOP/s | 1,758.8 TFLOP/s | 95.0% |
+| 8192 × 8192 × 8192 | 1,447.3 TFLOP/s | 2,109.7 TFLOP/s | 68.6% |
+| 16384 × 512 × 4096 | 814.9 TFLOP/s | 1,434.8 TFLOP/s | 56.8% |
+| 32768 × 512 × 4096 | 758.2 TFLOP/s | 1,508.5 TFLOP/s | 50.3% |
+| 512 × 16384 × 4096 | 1,270.3 TFLOP/s | 1,498.7 TFLOP/s | 84.8% |
 
 The persistent 2-CTA kernel is the fastest of the three CuTe DSL variants on all five shapes, but
-its distance to cuBLASLt depends strongly on the shape. Source:
+its distance to cuBLASLt depends strongly on matrix shape. The near-square 4096³ case reaches
+**95.0%** of cuBLASLt, whereas the 32768 × 512 × 4096 case reaches **50.3%**. Source:
 [`results/gemm_comparison.csv`](results/gemm_comparison.csv).
 
 ### V. BF16, FP8 and NVFP4 GEMM
@@ -267,50 +283,53 @@ its distance to cuBLASLt depends strongly on the shape. Source:
 
 | GEMM shape (M × N × K) | BF16 CuTe DSL | FP8 CuTe DSL | NVFP4 CuTe DSL |
 |---|---:|---:|---:|
-| 4096 × 4096 × 4096 | 1,685.0 | 2,938.0 (1.74×) | 4,032.9 (2.39×) |
-| 8192 × 8192 × 8192 | 1,459.0 | 3,122.9 (2.14×) | 5,568.8 (3.82×) |
-| 32768 × 512 × 4096 | 757.6 | 1,721.1 (2.27×) | 2,992.8 (3.95×) |
+| 4096 × 4096 × 4096 | 1,681.3 | 2,936.8 (1.75×) | 4,029.0 (2.40×) |
+| 8192 × 8192 × 8192 | 1,458.5 | 3,125.0 (2.14×) | 5,572.2 (3.82×) |
+| 32768 × 512 × 4096 | 756.7 | 1,718.5 (2.27×) | 3,001.5 (3.97×) |
 
 Throughputs are in TFLOP/s; parentheses give the speedup over BF16 on the same shape. Lower
-precision raises throughput, but the gain depends on the shape and in several cases stays below
-the ratio of the nominal dense peaks. NVFP4's operand representation and numerical error differ
-from BF16 and FP8.
+precision raises throughput substantially, but the gain is shape-dependent and remains below the
+ratio of the nominal dense peaks in several cases. NVFP4 also changes the operand representation
+through block scaling, so its numerical and data-movement behavior is not directly equivalent to
+BF16 or FP8.
 
 ![Matched CuTe DSL and cuBLASLt comparisons by precision](results/precision_cutedsl_vs_cublaslt.svg)
 
-On identical operands, CuTe DSL reaches **50.0–95.3%** of cuBLASLt's throughput in BF16,
-**64.4–92.2%** in FP8 and **73.2–84.2%** in NVFP4. Every timed output of both implementations
-passed validation. Sources: [`results/precision_comparison.csv`](results/precision_comparison.csv),
+On identical operands, CuTe DSL reaches **49.9–95.1%** of cuBLASLt's throughput in BF16,
+**64.3–92.1%** in FP8 and **73.3–84.2%** in NVFP4. Every timed output of both implementations
+passed validation. The highest measured cuBLASLt throughput in this comparison is **7,545.6
+TFLOP/s** for NVFP4 on 8192³. Sources:
+[`results/precision_comparison.csv`](results/precision_comparison.csv) and
 [`results/precision_cutedsl_vs_cublaslt.csv`](results/precision_cutedsl_vs_cublaslt.csv).
 
 ### Hot-cache BF16 GEMM traffic
 
 In the six profiled launches, the persistent 2-CTA CuTe DSL kernel reads more DRAM bytes than
-cuBLASLt at 8192 × 8192 × 8192 (**3.35 versus 1.16 GB**) and at 32768 × 512 × 4096 (**1.08 versus
-0.28 GB**). The calibrated L2-to-SM TMA counter also records more bytes for CuTe DSL at those
-shapes. This matches the larger performance gaps but shows neither which operand was reread nor
-that traffic alone caused the gap. `compulsory_read_bytes` is the combined A and B size;
-hot-cache DRAM reads can be smaller, including zero, in which case the L2/DRAM ratio is left
-empty. Source: [`results/gemm_profile.csv`](results/gemm_profile.csv).
+cuBLASLt at 8192 × 8192 × 8192 (**3.33 versus 1.16 GB**) and at 32768 × 512 × 4096
+(**1.08 versus 0.28 GB**). The calibrated L2-to-SM TMA counter also records more bytes for CuTe
+DSL at those shapes. These are the same shapes where the BF16 throughput gap is largest, which
+supports a data-movement interpretation, but the aggregate counters do not identify which operand
+was reread and do not prove that traffic alone caused the performance difference.
+`compulsory_read_bytes` is the combined A and B size; with hot caches, DRAM reads can be smaller
+than this quantity. Source: [`results/gemm_profile.csv`](results/gemm_profile.csv).
 
-## Reproducing the published summaries
+## Reproducing the analysis
 
-The complete acquisition accompanies the thesis as `supplementary/study-20260923T173150Z.tar.gz`
-(SHA-256 `71533e13b16c2e85a784c6f6abea3ef95cf4193af17794dd59155ad1777e4101`). It contains the raw
-samples, telemetry, Nsight Compute reports and exports, validation records and logs. The analysis
-reads the extracted archive directly, with no GPU:
+The final study was executed as `study-20260924T140749Z`; its tracked
+[`study-20260924T140749Z.log`](study-20260924T140749Z.log) records the complete command sequence
+and successful completion of the three campaigns, precision experiment, hot-cache GEMM profile and
+analysis step. The raw `runs/` directory is intentionally not tracked by Git, so exact
+regeneration of these particular CSV values requires the corresponding raw study directory.
+
+To run the same protocol again and regenerate its summaries:
 
 ```bash
-mkdir -p /tmp/gb300 && tar -xzf supplementary/study-20260923T173150Z.tar.gz -C /tmp/gb300
-make regenerate STUDY=/tmp/gb300/study-20260923T173150Z
-diff -r results runs/regenerated-<UTC>
+make final-study 2>&1 | tee study.log
+make regenerate STUDY=runs/study-<UTC>
 ```
 
-Eleven of the thirteen files come out byte-identical, including all six figures and
-`gemm_profile.csv`, which is rebuilt from the exported counters. In the two Experiment V CSVs,
-6 of 738 values differ by 10⁻⁶, one unit in the last printed digit: the archived
-`precision/raw/repetitions.csv` stores six decimals, whereas the published means were computed
-from full-precision values. New runs store full precision, so their summaries regenerate exactly.
+`analysis/analyze.py --study` produces the seven CSV summaries and six SVG figures. The PDF files
+in `results/` are derived exports of those six SVG figures.
 
 ## Limitations
 
@@ -340,19 +359,17 @@ from full-precision values. New runs store full precision, so their summaries re
 | `precision_comparison/` | Experiment V driver, operand-sharing cuBLASLt baseline and its bridge |
 | `scripts/` | Campaign runner, GPU selection, clock telemetry, Nsight Compute captures, GEMM profile, run metadata |
 | `analysis/` | Statistics and figures |
-| `results/` | Published CSV summaries and SVG figures |
+| `results/` | Published CSV summaries plus SVG and PDF figures |
 | `Dockerfile`, `VERSIONS.env`, `Makefile` | Pinned environment and commands |
 | `build/`, `runs/` | Binaries and measurements; not tracked by Git |
 
 ## Versions
 
-- `tfm-acquisition` (commit `6868f00`): the exact code that acquired the published study; the
-  archive records this commit.
-- `tfm-final`: the thesis release on `main`, with separate acquisition, analysis and figure code.
-  Git commits and per-run metadata identify the sources and experimental context; acquisition
-  and analysis enforce the validation requirements above. The kernels, measurement parameters,
-  timing, statistical calculations and published results match the acquisition version. A new
-  study writes all thirteen summaries to its `analysis/` directory, and Experiment V's raw tables
-  keep full float precision. Cite this tag and its resolved commit for the thesis repository.
+- `tfm-acquisition` (commit `6868f00`): preserved acquisition snapshot from the earlier
+  validated campaign.
+- `tfm-final` (commit `4d47d9a`): thesis-release codebase used as the stable reference before
+  publishing the final 2026-09-24 measurement set. The subsequent commits update only the
+  published measurements, figures, execution log and README; the benchmark and analysis source
+  remains unchanged.
 
 BSD 3-Clause; see `LICENSE`.
