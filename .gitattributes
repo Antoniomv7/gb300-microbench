@@ -1,2 +1,2 @@
-results/** linguist-generated=true
-evidence/sass/** linguist-generated=true
+results/** linguist-generated
+evidence/sass/** linguist-generated -linguist-detectable
