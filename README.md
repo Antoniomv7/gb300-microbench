@@ -318,8 +318,9 @@ than this quantity. Source: [`results/gemm_profile.csv`](results/gemm_profile.cs
 The final study was executed as `study-20260924T140749Z`; its tracked
 [`study-20260924T140749Z.log`](study-20260924T140749Z.log) records the complete command sequence
 and successful completion of the three campaigns, precision experiment, hot-cache GEMM profile and
-analysis step. The raw `runs/` directory is intentionally not tracked by Git, so exact
-regeneration of these particular CSV values requires the corresponding raw study directory.
+analysis step. The raw `runs/` directory is intentionally not tracked by Git. The complete final
+study archive, together with its SHA-256 checksum, is published as an asset of the `tfm-final`
+GitHub Release, so the published summaries can be regenerated without repeating the GPU campaign.
 
 To run the same protocol again and regenerate its summaries:
 
@@ -360,16 +361,15 @@ in `results/` are derived exports of those six SVG figures.
 | `scripts/` | Campaign runner, GPU selection, clock telemetry, Nsight Compute captures, GEMM profile, run metadata |
 | `analysis/` | Statistics and figures |
 | `results/` | Published CSV summaries plus SVG and PDF figures |
+| `evidence/sass/` | SASS listings regenerated from the thesis benchmark binaries |
 | `Dockerfile`, `VERSIONS.env`, `Makefile` | Pinned environment and commands |
-| `build/`, `runs/` | Binaries and measurements; not tracked by Git |
+| `build/`, `runs/` | Binaries and local measurements; not tracked by Git |
 
 ## Versions
 
-- `tfm-acquisition` (commit `6868f00`): preserved acquisition snapshot from the earlier
-  validated campaign.
-- `tfm-final` (commit `4d47d9a`): thesis-release codebase used as the stable reference before
-  publishing the final 2026-09-24 measurement set. The subsequent commits update only the
-  published measurements, figures, execution log and README; the benchmark and analysis source
-  remains unchanged.
+- `tfm-acquisition`: preserved acquisition snapshot from the earlier validated campaign.
+- `tfm-final`: frozen code revision associated with the final thesis study. Later commits only
+  publish final measurements, figures, execution evidence, SASS listings and documentation; the
+  benchmark and analysis source used for the study is unchanged.
 
 BSD 3-Clause; see `LICENSE`.
