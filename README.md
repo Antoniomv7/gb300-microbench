@@ -9,7 +9,9 @@ Experiment IV.
 
 Experiments I–III are hand-written CUDA/PTX (`cp.async`, `cp.async.bulk.tensor`, `tcgen05.mma`
 with Tensor Memory). Experiments IV and V run pinned CUTLASS CuTe DSL example kernels and
-cuBLASLt. `results/` holds the published summaries and figures of this thesis study.
+cuBLASLt. `results/` preserves the original summaries and figures of this thesis study.
+The interpretation below and the revised scaling figure in `docs/` use the measured scaling
+ratios; historical clock-derived estimates remain archived for traceability.
 
 ## Platform
 
@@ -33,8 +35,9 @@ cuBLASLt. `results/` holds the published summaries and figures of this thesis st
 | – | DRAM and L2 traffic of single BF16 GEMM launches (diagnostic) | `scripts/profile_gemm.py` | `make gemm-profile` |
 
 `scripts/run_campaign.py` holds the parameters of Experiments I–IV and runs them.
-`analysis/analyze.py` computes every published number from the raw measurements, and
-`analysis/figures.py` draws the figures.
+`analysis/analyze.py` computes the original summaries from the raw measurements, and
+`analysis/figures.py` draws their archived figures. The documentation also derives tile-traffic
+predictions and a diagnostic work/duration rate from those measurements.
 
 ### I. Global-to-shared memory paths
 
@@ -61,8 +64,9 @@ in Tensor Memory (`tcgen05.alloc`, read back with `tcgen05.ld`); shared code is 
   UMMAs issued between two `tcgen05.commit` mbarrier waits.
 - `%clock64` times the elected thread's issue-and-completion loop of 1,000 iterations.
 - Metric: FLOP/cycle = 2·M·N·K·UMMAs / cycles, divided by two for the two-SM pair.
-- Nsight Compute measures the SM clock of both N = 256, depth-256 kernels; with that clock the
-  analysis converts the best per-SM result into a modeled TFLOP/s per SM.
+- Nsight Compute records duration and SM-clock aggregates for both N = 256, depth-256 kernels.
+  Work divided by the profiled duration provides a diagnostic whole-kernel TFLOP/s rate; the
+  device-wide clock average does not identify the active SM's effective frequency.
 
 ### III. Whole-device UMMA scaling
 
@@ -75,8 +79,9 @@ or one two-CTA cluster) and at device scale (148 one-SM CTAs, or 74 two-CTA clus
 - `scripts/gpu_telemetry.py` samples SM clock, power and temperature with `nvidia-smi` every
   50 ms. Samples are attributed to a configuration by host timestamps; each configuration
   needs at least three samples inside its timed launches.
-- Metrics: total TFLOP/s; scaling efficiency = device / (work units × isolated); the
-  clock-normalized efficiency also divides by the ratio of the mean sampled SM clocks.
+- Metrics: total TFLOP/s; measured scaling efficiency = device / (work units × isolated),
+  with CUDA events timing both executions. Clock telemetry provides operating context; it does
+  not separate the effects of effective frequency and work per cycle on this ratio.
 
 ### IV. BF16 GEMM implementations
 
@@ -89,6 +94,7 @@ provides cuBLASLt with the first supported of up to 32 heuristic algorithms (bes
 - A (M×K) and B (N×K) are BF16 and K-major; accumulation and output are FP32.
 - Shapes: 4096³, 8192³, 16384×512×4096, 32768×512×4096 and 512×16384×4096.
 - All candidates share the operands of a shape and one IEEE-FP32 reference.
+- Seed 1111 initializes the BF16 operands with integers from {−2, −1, 0, 1}.
 - Two warm-up launches, then CUDA events time ten launches; TFLOP/s = 2·M·N·K / time.
 
 ### V. BF16, FP8 and NVFP4
@@ -99,6 +105,8 @@ provides cuBLASLt with the first supported of up to 32 heuristic algorithms (bes
 cluster, a TMA store, FP32 accumulation and FP32 output.
 
 - Shapes: 4096³, 8192³ and 32768×512×4096.
+- With seed 1111, BF16 and FP8 use integers from {−2, −1, 0, 1, 2}; NVFP4 uses base values
+  from {−2, −1, 0, 1} with block scales of 1 or 2.
 - Per shape and format: three repetitions of 5 warm-up and 20 timed launches, timed by
   `cute.testing.benchmark` with CUDA events and hot caches.
 - `cublaslt_precision.py` records the operands that each CuTe DSL repetition creates and encodes
@@ -220,11 +228,11 @@ software stack and configuration grid; they are not architectural peak specifica
 | Mechanism | Main observation |
 |---|---|
 | Global-to-shared movement | LDGSTS is faster than TMA in 8/9 tested configurations; both peak near 7.0 TB/s effective rate at 4 stages and 64 KiB in flight. |
-| UMMA issue throughput | The best one-SM case reaches 8,101 FLOP/cycle/SM; a two-SM work unit delivers 1.982× the one-SM total throughput. |
-| Device scaling | Two-SM work units reach 2,119.9 TFLOP/s across 148 SMs, with 93.2% raw and 98.1% clock-normalized scaling efficiency. |
+| UMMA issue throughput | The best one-SM case reaches 8,101 FLOP/cycle/SM; a two-SM work unit delivers 1.982× the one-SM total throughput per cycle. |
+| Device scaling | One-SM and two-SM work units reach 2,104.1 and 2,119.9 TFLOP/s across 148 SMs, retaining 91.7% and 93.2% of their isolated throughput per SM. |
 | BF16 GEMM | The persistent 2-CTA CuTe DSL kernel is the fastest CuTe variant for every tested shape, reaching 50.3–95.0% of the corresponding cuBLASLt throughput. |
 | Low precision | Relative to the CuTe DSL BF16 kernel, FP8 reaches up to 2.27× and NVFP4 up to 3.97× higher throughput on the tested shapes. |
-| GEMM traffic diagnostic | For the two shapes with the largest BF16 performance gaps, the CuTe DSL kernel also produces substantially more hot-cache DRAM traffic than cuBLASLt; the counters show correlation, not causation. |
+| GEMM traffic diagnostic | A tile-supply model exactly reproduces the TMA read volumes of P2 and, assuming larger joint CTA tiles, cuBLASLt. The larger DRAM traffic of P2 remains a separate locality question. |
 
 ### I. HBM-to-shared-memory paths
 
@@ -242,21 +250,37 @@ per useful byte in all six captured configurations. Source:
 
 ![Isolated BF16 UMMA throughput](results/umma_throughput.svg)
 
-At N = 256 and depth 256, the isolated one-SM kernel reaches **8,101 FLOP/cycle/SM**, a modeled
-**16.377 TFLOP/s/SM** at the measured clock. The two-SM kernel reaches **8,028 FLOP/cycle/SM**,
-or **1.982×** the total throughput of the one-SM kernel.
+At N = 256 and depth 256, the isolated one-SM kernel reaches **8,101 FLOP/cycle/SM**. The two-SM
+kernel reaches **8,028 FLOP/cycle/SM**, or **1.982×** the total throughput per cycle of the
+one-SM kernel.
 
-![BF16 UMMA scaling to 148 SMs](results/umma_device_scaling.svg)
+In the first campaign, the one-SM NCU capture records **17.308384 ms** for 268,435,456,000 FLOP:
+work divided by duration gives **15.509 TFLOP/s/SM**, consistent with the **15.502 TFLOP/s/SM**
+isolated reference measured with CUDA events in Experiment III. Dividing the 33,136,959 cycles
+of the internal loop by that NCU duration gives approximately **1,914.5 MHz**, close to NCU's
+minimum of **1,917.1 MHz** rather than its device-wide mean of **2,021.6 MHz**. This is a
+consistency check across separate acquisitions and timing intervals.
 
-| Execution | Active SMs | Mean throughput | Scaling efficiency | Clock-normalized efficiency |
-|---|---:|---:|---:|---:|
-| One-SM work units | 148 | 2,104.1 TFLOP/s | 91.7% | 97.3% |
-| Two-SM work units | 148 | 2,119.9 TFLOP/s | 93.2% | 98.1% |
+![Measured BF16 UMMA throughput and scaling to 148 SMs](docs/umma_device_scaling.svg)
 
-Two-SM work units deliver about **0.8%** more device throughput. The isolated units ran at the
-2,032 MHz maximum clock; the device-scale measurements averaged about **1,915 MHz** for one-SM
-work units and **1,931 MHz** for two-SM work units. The gap between raw and clock-normalized
-efficiency shows why a fixed-clock extrapolation from one SM overstates the scaling loss.
+| Execution | Active SMs | Mean throughput | Measured scaling efficiency |
+|---|---:|---:|---:|
+| One-SM work units | 148 | 2,104.1 TFLOP/s | 91.7% |
+| Two-SM work units | 148 | 2,119.9 TFLOP/s | 93.2% |
+
+Two-SM work units deliver about **0.8%** more device throughput. `nvidia-smi` reports 2,032 MHz
+for the isolated runs and means of about **1,915 MHz** and **1,931 MHz** at device scale.
+These external samples do not establish the active SM's effective clock in the isolated runs,
+so they cannot support a clock-normalized scaling conclusion. The measured ratios retain the
+combined effects of frequency, work per cycle and coordination. Recording `%clock64` and
+`%globaltimer` over the same interval in the scaling kernel would help distinguish them.
+
+**Traceability:** `estimated_tflops_per_sm` in `umma_throughput.csv` and
+`scaling_efficiency_freq_normalized` in `umma_device_scaling.csv` retain the original
+clock-derived calculations. Those fields and the original scaling SVG/PDF in `results/` are
+preserved to keep regeneration byte-identical; they are excluded from the conclusions above.
+The figure displayed here is regenerated from the measured columns with
+`python3 docs/plot_scaling.py` (Matplotlib required).
 Sources: [`results/umma_throughput.csv`](results/umma_throughput.csv) and
 [`results/umma_device_scaling.csv`](results/umma_device_scaling.csv).
 
@@ -313,6 +337,22 @@ was reread and do not prove that traffic alone caused the performance difference
 `compulsory_read_bytes` is the combined A and B size; with hot caches, DRAM reads can be smaller
 than this quantity. Source: [`results/gemm_profile.csv`](results/gemm_profile.csv).
 
+For BF16, supplying each joint output tile of size *m*×*n* once along K predicts
+**Q = 2MNK(1/m + 1/n) bytes** of TMA reads, when the matrix dimensions are exact tile multiples.
+P2 uses joint tiles of 256×128. If the sizes in cuBLASLt's `nvjet` kernel names describe one CTA,
+their `2cta` pairs form 256×256 tiles for the square shapes and 512×128 for the tall shape:
+
+| Shape | P2 joint tile | P2 predicted = measured | Inferred cuBLASLt joint tile | cuBLASLt predicted = measured |
+|---|---|---:|---|---:|
+| 4096³ | 256×128 | 1,610,612,736 B (1.50 GiB) | 256×256 | 1,073,741,824 B (1.00 GiB) |
+| 8192³ | 256×128 | 12,884,901,888 B (12.00 GiB) | 256×256 | 8,589,934,592 B (8.00 GiB) |
+| 32768×512×4096 | 256×128 | 1,610,612,736 B (1.50 GiB) | 512×128 | 1,342,177,280 B (1.25 GiB) |
+
+All six predictions match the TMA counters exactly. For cuBLASLt, this supports a larger-joint-tile
+interpretation of the L2-to-SM gap; the undocumented names and aggregate counters do not uniquely
+identify its implementation. Traversal order and cache reuse remain hypotheses for the separate
+DRAM excess.
+
 ## Reproducing the analysis
 
 The final study was executed as `study-20260924T140749Z`; its tracked
@@ -322,6 +362,10 @@ analysis step. The raw `runs/` directory is intentionally not tracked by Git. Th
 study archive, together with its SHA-256 checksum, is published as an asset of the `tfm-final`
 GitHub Release, so the published summaries can be regenerated without repeating the GPU campaign.
 
+The `tfm-final` tag freezes the acquisition code, but its `results/` directory still contains an
+earlier acquisition (for example, P2 on 4096³ is 1,679.7 TFLOP/s there). The Release archive and
+the final summaries on `main` are the references for the thesis (1,671.6 TFLOP/s in that case).
+
 To run the same protocol again and regenerate its summaries:
 
 ```bash
@@ -330,18 +374,27 @@ make regenerate STUDY=runs/study-<UTC>
 ```
 
 `analysis/analyze.py --study` produces the seven CSV summaries and six SVG figures. The PDF files
-in `results/` are derived exports of those six SVG figures.
+in `results/` are derived exports of those six SVG figures. These original files and the analysis
+code are unchanged by the interpretation corrections; `docs/umma_device_scaling.svg` is a
+separate documentation figure drawn from the same CSV.
 
 ## Limitations
 
 - One GPU in one system: the results describe this B300 SXM6 AC, driver, software stack and
   configuration grid, and are not architectural peaks.
-- Clocks are not locked. Throughput includes the operating clock (DVFS), which Experiment III
-  samples; its power samples are indicative telemetry, not a calibrated energy measurement.
+- Clocks are not locked. Experiment III samples device-reported clock and power, without measuring
+  the effective clock of each active SM. Power samples are indicative telemetry, not a calibrated
+  energy measurement.
+- GEMM inputs are small, exactly representable integers. In BF16, 0, ±1 and ±2 have all seven
+  stored fraction bits zero. This restricted set of bit patterns may affect switching activity,
+  power and effective frequency; the study does not quantify that dependence. Identical operands
+  make the library comparisons fair for these inputs, while other distributions may change both
+  absolute rates and their ratios.
 - The GEMM measurements reuse operands across launches (hot caches), so the L2 can hold part of
   them.
 - Experiment I's effective rate is useful bytes over kernel time, not a DRAM-bandwidth counter or
-  a GEMM prediction. Experiment II's TFLOP/s per SM is modeled from cycles and the profiled clock.
+  a GEMM prediction. Experiment II measures FLOP/cycle/SM; work divided by NCU duration provides a
+  separate whole-kernel diagnostic.
 - Experiments IV and V compare specific CuTe DSL example kernels with cuBLASLt's first supported
   heuristic algorithm, without autotuning; they do not establish a ceiling for either library.
 - The vendor peaks in `precision_comparison.csv` are nominal dense values.
@@ -360,7 +413,8 @@ in `results/` are derived exports of those six SVG figures.
 | `precision_comparison/` | Experiment V driver, operand-sharing cuBLASLt baseline and its bridge |
 | `scripts/` | Campaign runner, GPU selection, clock telemetry, Nsight Compute captures, GEMM profile, run metadata |
 | `analysis/` | Statistics and figures |
-| `results/` | Published CSV summaries plus SVG and PDF figures |
+| `results/` | Original CSV summaries plus SVG and PDF figures, including historical clock-derived fields |
+| `docs/` | Revised measured-scaling figure and its CPU plotting script |
 | `evidence/sass/` | SASS listings regenerated from the thesis benchmark binaries |
 | `Dockerfile`, `VERSIONS.env`, `Makefile` | Pinned environment and commands |
 | `build/`, `runs/` | Binaries and local measurements; not tracked by Git |
