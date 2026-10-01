@@ -4,8 +4,8 @@ Five experiments on one NVIDIA B300 follow GEMM operands from memory to the Tens
 to complete GEMMs. They measure how LDGSTS and TMA move data into shared memory (I), how fast
 one-SM and two-SM UMMA instructions run (II), how UMMA throughput scales to the whole device
 (III), how CuTe DSL BF16 GEMMs compare with cuBLASLt (IV), and how BF16, FP8 and NVFP4 inputs
-change GEMM throughput (V). A Nsight Compute profile of DRAM and L2 traffic accompanies
-Experiment IV.
+change GEMM throughput (V). Experiment IV also includes a memory traffic profile with hot caches,
+collected with Nsight Compute to relate DRAM and L2 bytes to the measured performance.
 
 Experiments I–III are hand-written CUDA/PTX (`cp.async`, `cp.async.bulk.tensor`, `tcgen05.mma`
 with Tensor Memory). Experiments IV and V run pinned CUTLASS CuTe DSL example kernels and
@@ -32,7 +32,7 @@ ratios; historical clock-derived estimates remain archived for traceability.
 | III | BF16 UMMA throughput from one work unit to all 148 SMs | `umma_throughput/umma_device_scaling.cu` | `make exp3-scaling` |
 | IV | BF16 GEMM: three CuTe DSL kernels versus cuBLASLt | `gemm_comparison/` | `make exp4-gemm` |
 | V | BF16, FP8 and NVFP4 GEMM: CuTe DSL versus cuBLASLt on identical operands | `precision_comparison/` | `make precision` |
-| – | DRAM and L2 traffic of single BF16 GEMM launches (diagnostic) | `scripts/profile_gemm.py` | `make gemm-profile` |
+| IV (profile) | Memory traffic profile (hot cache): DRAM and L2 bytes per BF16 GEMM launch | `scripts/profile_gemm.py` | `make gemm-profile` |
 
 `scripts/run_campaign.py` holds the parameters of Experiments I–IV and runs them.
 `analysis/analyze.py` computes the original summaries from the raw measurements, and
@@ -118,15 +118,21 @@ cluster, a TMA store, FP32 accumulation and FP32 output.
 - After all timing, one PyTorch profiler capture per plan names the cuBLASLt kernel. An empty trace
   is recorded as `UNAVAILABLE`; the algorithm identity and validation remain required.
 
-### GEMM traffic profile
+### Experiment IV memory traffic profile (hot cache)
+
+This profile is part of Experiment IV and adds memory-traffic counters to its performance
+comparison. The counters help interpret the throughput differences between CuTe DSL and cuBLASLt.
 
 `scripts/profile_gemm.py` profiles the persistent two-CTA CuTe DSL kernel and cuBLASLt on 4096³,
 8192³ and 32768×512×4096. Each capture runs its own worker process under `ncu`. The worker repeats
 Experiment IV's operand setup, validation and two warm-up launches. It then wraps one launch in the
 NVTX range `gb300_gemm_profile`, the only range that `ncu` profiles.
 
-- Hot caches (the study): application replay with `--cache-control none`, so every pass repeats
-  setup, validation and warm-up. Cold caches (diagnostic): kernel replay with `--cache-control all`.
+- The final study uses hot caches: application replay with `--cache-control none`, so every pass
+  repeats setup, validation and the two warm-up launches. Here, hot caches means reusing the
+  operand buffers after warm-up; L2 may retain part of the inputs, while other data come from HBM.
+- The profiler also supports a cold-cache mode: kernel replay with `--cache-control all`.
+  This option was not used for the final study and is not part of the published traffic results.
   Clocks stay unlocked in both modes.
 - Counters: DRAM read and write bytes, duration and SM clock.
 - The L2-to-SM TMA read counter `l1tex__m_xbar2l1tex_read_bytes_mem_global_op_tma_ld.sum` is
@@ -170,7 +176,7 @@ The target builds once and then runs six commands; the first failure stops it:
 |---|---|
 | Experiments I–IV, three independent campaigns | `campaign-1/`, `campaign-2/`, `campaign-3/` |
 | Experiment V | `precision/` |
-| Hot-cache GEMM traffic profile | `gemm-profile-hot/` |
+| Experiment IV memory traffic profile (hot cache) | `gemm-profile-hot/` |
 | `analysis/analyze.py --study` on the CPU | `analysis/`: the thirteen files that `results/` publishes |
 
 Use `make final-study 2>&1 | tee study.log` to keep a log. The underlying targets are
@@ -201,7 +207,7 @@ Use `make final-study 2>&1 | tee study.log` to keep a log. The underlying target
 - **Saved-data validation.** Analysis requires completed runs from clean sources and one GPU and
   source commit across all inputs. Experiment V rechecks the complete sets of repetitions,
   validation records, identical operand bytes (including NVFP4 scales) and cuBLASLt plans.
-  A standalone GEMM profile requires its timing summary's adjacent analysis metadata.
+  The Experiment IV traffic profile requires its timing summary's adjacent analysis metadata.
 
 ## Statistics
 
@@ -232,7 +238,7 @@ software stack and configuration grid; they are not architectural peak specifica
 | Device scaling | One-SM and two-SM work units reach 2,104.1 and 2,119.9 TFLOP/s across 148 SMs, retaining 91.7% and 93.2% of their isolated throughput per SM. |
 | BF16 GEMM | The persistent 2-CTA CuTe DSL kernel is the fastest CuTe variant for every tested shape, reaching 50.3–95.0% of the corresponding cuBLASLt throughput. |
 | Low precision | Relative to the CuTe DSL BF16 kernel, FP8 reaches up to 2.27× and NVFP4 up to 3.97× higher throughput on the tested shapes. |
-| GEMM traffic diagnostic | A tile-supply model exactly reproduces the TMA read volumes of P2 and, assuming larger joint CTA tiles, cuBLASLt. The larger DRAM traffic of P2 remains a separate locality question. |
+| Experiment IV traffic profile (hot cache) | A tile-supply model exactly reproduces the TMA read volumes of P2 and, assuming larger joint CTA tiles, cuBLASLt. The larger DRAM traffic of P2 remains a separate locality question. |
 
 ### I. HBM-to-shared-memory paths
 
@@ -326,7 +332,7 @@ TFLOP/s** for NVFP4 on 8192³. Sources:
 [`results/precision_comparison.csv`](results/precision_comparison.csv) and
 [`results/precision_cutedsl_vs_cublaslt.csv`](results/precision_cutedsl_vs_cublaslt.csv).
 
-### Hot-cache BF16 GEMM traffic
+### IV. Memory traffic results (hot cache)
 
 In the six profiled launches, the persistent 2-CTA CuTe DSL kernel reads more DRAM bytes than
 cuBLASLt at 8192 × 8192 × 8192 (**3.33 versus 1.16 GB**) and at 32768 × 512 × 4096
@@ -357,8 +363,8 @@ DRAM excess.
 
 The final study was executed as `study-20260924T140749Z`; its tracked
 [`study-20260924T140749Z.log`](study-20260924T140749Z.log) records the complete command sequence
-and successful completion of the three campaigns, precision experiment, hot-cache GEMM profile and
-analysis step. The raw `runs/` directory is intentionally not tracked by Git. The complete final
+and successful completion of the three campaigns, precision experiment, Experiment IV hot-cache
+traffic profile and analysis step. The raw `runs/` directory is intentionally not tracked by Git. The complete final
 study archive, together with its SHA-256 checksum, is published as an asset of the `tfm-final`
 GitHub Release, so the published summaries can be regenerated without repeating the GPU campaign.
 
@@ -398,8 +404,8 @@ separate documentation figure drawn from the same CSV.
 - Experiments IV and V compare specific CuTe DSL example kernels with cuBLASLt's first supported
   heuristic algorithm, without autotuning; they do not establish a ceiling for either library.
 - The vendor peaks in `precision_comparison.csv` are nominal dense values.
-- The traffic profile has one launch per case; aggregate counters cannot attribute rereads to an
-  operand.
+- The Experiment IV traffic profile has one launch per case; aggregate counters cannot attribute
+  rereads to an operand.
 - Three campaigns or three repetitions support descriptive statistics, not inference.
 
 ## Repository layout
@@ -411,7 +417,7 @@ separate documentation figure drawn from the same CSV.
 | `umma_throughput/` | Experiments II and III: UMMA and Tensor Memory kernels |
 | `gemm_comparison/` | Experiment IV driver and its cuBLASLt bridge |
 | `precision_comparison/` | Experiment V driver, operand-sharing cuBLASLt baseline and its bridge |
-| `scripts/` | Campaign runner, GPU selection, clock telemetry, Nsight Compute captures, GEMM profile, run metadata |
+| `scripts/` | Campaign runner, GPU selection, clock telemetry, Nsight Compute captures, Experiment IV traffic profile, run metadata |
 | `analysis/` | Statistics and figures |
 | `results/` | Original CSV summaries plus SVG and PDF figures, including historical clock-derived fields |
 | `docs/` | Revised measured-scaling figure and its CPU plotting script |
