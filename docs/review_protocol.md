@@ -139,4 +139,4 @@ is retained and constrains the hypothesis.
    until existing links and release assets have been checked; do not move old tags to hide
    the mismatch. If Zenodo is used, archive this accepted release and cite its DOI.
 
-The completed acquisition and current summaries are published together on this review branch. Historical SASS and tag targets remain explicitly historical; an optional DOI must refer to the accepted archive and its recorded source identity.
+The completed acquisition and current summaries are published together on `main`. Historical SASS and tag targets remain explicitly historical; an optional DOI must refer to the accepted archive and its recorded source identity.
