@@ -1,0 +1,17 @@
+{
+  "gpu_uuid": "GPU-40e00845-d89c-1393-2c32-a2dca3ee9442",
+  "source_commit": "5f6902c536a2d35183d2d2cbe0ec2561364f4884",
+  "protocol_version": 2,
+  "environment_fingerprint": "f3b55f892f1b81baf25df71aad3f0463645ebfd15cdfcdd2f84b548c6e3e3870",
+  "created_utc": "2026-10-21T20:33:44.394489+00:00",
+  "campaigns": [
+    "runs/study-20261021T202311Z/campaign-1",
+    "runs/study-20261021T202311Z/campaign-2",
+    "runs/study-20261021T202311Z/campaign-3"
+  ],
+  "precision": "runs/study-20261021T202311Z/precision",
+  "power": "runs/study-20261021T202311Z/power",
+  "gemm_profile": "runs/study-20261021T202311Z/gemm-profile-hot",
+  "cache_state": "hot",
+  "gemm_summary": null
+}

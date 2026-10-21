@@ -1,6 +1,6 @@
 # Historical study: 24 September 2026
 
-This page preserves the published interpretation before protocol v2. Its methods, commands and limitations describe the earlier acquisition; use the [current protocol](review_protocol.md) for new measurements. No protocol-v2 B300 results have been acquired yet.
+This page preserves the published interpretation before protocol v2. Its methods, commands and limitations describe the earlier acquisition; use the [current protocol](review_protocol.md) for new measurements. The current README reports protocol-v2 results separately.
 
 ## Published results
 
@@ -24,7 +24,7 @@ software stack and configuration grid; they are not architectural peak specifica
 
 ### I. HBM-to-shared-memory paths
 
-![Effective transfer rate for LDGSTS and TMA](../results/memory_paths.svg)
+![Effective transfer rate for LDGSTS and TMA](https://raw.githubusercontent.com/Antoniomv7/gb300-microbench/5a192bdc35e4bf776d63c9e78e76d636cb35d066/results/memory_paths.svg)
 
 LDGSTS reaches the higher effective rate in **8 of 9** stage and in-flight-byte configurations.
 The highest means are **7,024.5 GB/s** for LDGSTS and **6,964.2 GB/s** for TMA, both at four stages
@@ -32,11 +32,11 @@ and 64 KiB in flight. At two stages and 64 KiB, TMA is marginally higher: **6,95
 6,951.8 GB/s**. More bytes in flight help both paths in this grid, while eight stages reduce
 throughput substantially, most strongly for TMA. The DRAM counters read approximately one byte
 per useful byte in all six captured configurations. Source:
-[`results/memory_paths.csv`](../results/memory_paths.csv).
+[`results/memory_paths.csv`](https://raw.githubusercontent.com/Antoniomv7/gb300-microbench/5a192bdc35e4bf776d63c9e78e76d636cb35d066/results/memory_paths.csv).
 
 ### II–III. UMMA instruction throughput and device scaling
 
-![Isolated BF16 UMMA throughput](../results/umma_throughput.svg)
+![Isolated BF16 UMMA throughput](https://raw.githubusercontent.com/Antoniomv7/gb300-microbench/5a192bdc35e4bf776d63c9e78e76d636cb35d066/results/umma_throughput.svg)
 
 At N = 256 and depth 256, the isolated one-SM kernel reaches **8,101 FLOP/cycle/SM**. The two-SM
 kernel reaches **8,028 FLOP/cycle/SM**, or **1.982×** the total throughput per cycle of the
@@ -49,7 +49,7 @@ of the internal loop by that NCU duration gives approximately **1,914.5 MHz**, c
 minimum of **1,917.1 MHz** rather than its device-wide mean of **2,021.6 MHz**. This is a
 consistency check across separate acquisitions and timing intervals.
 
-![Measured BF16 UMMA throughput and scaling to 148 SMs](umma_device_scaling.svg)
+![Measured BF16 UMMA throughput and scaling to 148 SMs](https://raw.githubusercontent.com/Antoniomv7/gb300-microbench/5a192bdc35e4bf776d63c9e78e76d636cb35d066/docs/umma_device_scaling.svg)
 
 | Execution | Active SMs | Mean throughput | Measured scaling efficiency |
 |---|---:|---:|---:|
@@ -68,13 +68,13 @@ combined effects of frequency, work per cycle and coordination. Recording `%cloc
 clock-derived calculations. Those fields and the original scaling SVG/PDF in `results/` are
 preserved to keep regeneration byte-identical; they are excluded from the conclusions above.
 The figure displayed here is regenerated from the measured columns with
-`python3 docs/plot_scaling.py` (Matplotlib required).
-Sources: [`results/umma_throughput.csv`](../results/umma_throughput.csv) and
-[`results/umma_device_scaling.csv`](../results/umma_device_scaling.csv).
+the historical commit’s `docs/plot_scaling.py` (Matplotlib required).
+Sources: [`results/umma_throughput.csv`](https://raw.githubusercontent.com/Antoniomv7/gb300-microbench/5a192bdc35e4bf776d63c9e78e76d636cb35d066/results/umma_throughput.csv) and
+[`results/umma_device_scaling.csv`](https://raw.githubusercontent.com/Antoniomv7/gb300-microbench/5a192bdc35e4bf776d63c9e78e76d636cb35d066/results/umma_device_scaling.csv).
 
 ### IV. BF16 GEMM implementation and shape
 
-![BF16 CuTe DSL variants versus cuBLASLt](../results/gemm_comparison.svg)
+![BF16 CuTe DSL variants versus cuBLASLt](https://raw.githubusercontent.com/Antoniomv7/gb300-microbench/5a192bdc35e4bf776d63c9e78e76d636cb35d066/results/gemm_comparison.svg)
 
 | GEMM shape (M × N × K) | Persistent 2-CTA CuTe DSL | cuBLASLt | CuTe DSL / cuBLASLt |
 |---|---:|---:|---:|
@@ -87,11 +87,11 @@ Sources: [`results/umma_throughput.csv`](../results/umma_throughput.csv) and
 The persistent 2-CTA kernel is the fastest of the three CuTe DSL variants on all five shapes, but
 its distance to cuBLASLt depends strongly on matrix shape. The near-square 4096³ case reaches
 **95.0%** of cuBLASLt, whereas the 32768 × 512 × 4096 case reaches **50.3%**. Source:
-[`results/gemm_comparison.csv`](../results/gemm_comparison.csv).
+[`results/gemm_comparison.csv`](https://raw.githubusercontent.com/Antoniomv7/gb300-microbench/5a192bdc35e4bf776d63c9e78e76d636cb35d066/results/gemm_comparison.csv).
 
 ### V. BF16, FP8 and NVFP4 GEMM
 
-![CuTe DSL throughput by input precision](../results/precision_comparison.svg)
+![CuTe DSL throughput by input precision](https://raw.githubusercontent.com/Antoniomv7/gb300-microbench/5a192bdc35e4bf776d63c9e78e76d636cb35d066/results/precision_comparison.svg)
 
 | GEMM shape (M × N × K) | BF16 CuTe DSL | FP8 CuTe DSL | NVFP4 CuTe DSL |
 |---|---:|---:|---:|
@@ -105,14 +105,14 @@ ratio of the nominal dense peaks in several cases. NVFP4 also changes the operan
 through block scaling, so its numerical and data-movement behavior is not directly equivalent to
 BF16 or FP8.
 
-![Matched CuTe DSL and cuBLASLt comparisons by precision](../results/precision_cutedsl_vs_cublaslt.svg)
+![Matched CuTe DSL and cuBLASLt comparisons by precision](https://raw.githubusercontent.com/Antoniomv7/gb300-microbench/5a192bdc35e4bf776d63c9e78e76d636cb35d066/results/precision_cutedsl_vs_cublaslt.svg)
 
 On identical operands, CuTe DSL reaches **49.9–95.1%** of cuBLASLt's throughput in BF16,
 **64.3–92.1%** in FP8 and **73.3–84.2%** in NVFP4. Every timed output of both implementations
 passed validation. The highest measured cuBLASLt throughput in this comparison is **7,545.6
 TFLOP/s** for NVFP4 on 8192³. Sources:
-[`results/precision_comparison.csv`](../results/precision_comparison.csv) and
-[`results/precision_cutedsl_vs_cublaslt.csv`](../results/precision_cutedsl_vs_cublaslt.csv).
+[`results/precision_comparison.csv`](https://raw.githubusercontent.com/Antoniomv7/gb300-microbench/5a192bdc35e4bf776d63c9e78e76d636cb35d066/results/precision_comparison.csv) and
+[`results/precision_cutedsl_vs_cublaslt.csv`](https://raw.githubusercontent.com/Antoniomv7/gb300-microbench/5a192bdc35e4bf776d63c9e78e76d636cb35d066/results/precision_cutedsl_vs_cublaslt.csv).
 
 ### IV. Memory traffic results (hot cache)
 
@@ -123,7 +123,7 @@ DSL at those shapes. These are the same shapes where the BF16 throughput gap is 
 supports a data-movement interpretation, but the aggregate counters do not identify which operand
 was reread and do not prove that traffic alone caused the performance difference.
 `compulsory_read_bytes` is the combined A and B size; with hot caches, DRAM reads can be smaller
-than this quantity. Source: [`results/gemm_profile.csv`](../results/gemm_profile.csv).
+than this quantity. Source: [`results/gemm_profile.csv`](https://raw.githubusercontent.com/Antoniomv7/gb300-microbench/5a192bdc35e4bf776d63c9e78e76d636cb35d066/results/gemm_profile.csv).
 
 For BF16, supplying each joint output tile of size *m*×*n* once along K predicts
 **Q = 2MNK(1/m + 1/n) bytes** of TMA reads, when the matrix dimensions are exact tile multiples.

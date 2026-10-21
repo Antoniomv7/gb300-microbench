@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="500" viewBox="0 0 1260 500" role="img" aria-label="Sustained UMMA operating power">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="34.0" y="40.0" font-family="Arial, sans-serif" font-size="22" fill="#0f172a" font-weight="700">Sustained UMMA operating power</text>
+<text x="34.0" y="66.0" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Three 30-second windows after 10-second warm-up; whiskers show their range.</text>
+<text x="236.0" y="119.0" font-family="Arial, sans-serif" font-size="14" fill="#334155" text-anchor="middle" font-weight="700">GPU board power</text>
+<line x1="86.0" y1="376.0" x2="386.0" y2="376.0" stroke="#e2e8f0"/>
+<text x="78.0" y="380.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">0</text>
+<line x1="86.0" y1="318.2" x2="386.0" y2="318.2" stroke="#e2e8f0"/>
+<text x="78.0" y="322.2" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">307</text>
+<line x1="86.0" y1="260.5" x2="386.0" y2="260.5" stroke="#e2e8f0"/>
+<text x="78.0" y="264.5" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">614</text>
+<line x1="86.0" y1="202.8" x2="386.0" y2="202.8" stroke="#e2e8f0"/>
+<text x="78.0" y="206.8" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">921</text>
+<line x1="86.0" y1="145.0" x2="386.0" y2="145.0" stroke="#e2e8f0"/>
+<text x="78.0" y="149.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">1,228</text>
+<rect x="125.3" y="169.9" width="71.4" height="206.1" fill="#2563eb"/>
+<line x1="161.0" y1="170.1" x2="161.0" y2="169.8" stroke="#0f172a"/>
+<text x="161.0" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">1-SM units</text>
+<rect x="275.3" y="170.7" width="71.4" height="205.3" fill="#d97706"/>
+<line x1="311.0" y1="170.9" x2="311.0" y2="170.5" stroke="#0f172a"/>
+<text x="311.0" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">2-SM units</text>
+<text x="236.0" y="420.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b" text-anchor="middle">W</text>
+<text x="632.0" y="119.0" font-family="Arial, sans-serif" font-size="14" fill="#334155" text-anchor="middle" font-weight="700">Sustained useful throughput</text>
+<line x1="482.0" y1="376.0" x2="782.0" y2="376.0" stroke="#e2e8f0"/>
+<text x="474.0" y="380.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">0</text>
+<line x1="482.0" y1="318.2" x2="782.0" y2="318.2" stroke="#e2e8f0"/>
+<text x="474.0" y="322.2" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">589</text>
+<line x1="482.0" y1="260.5" x2="782.0" y2="260.5" stroke="#e2e8f0"/>
+<text x="474.0" y="264.5" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">1,179</text>
+<line x1="482.0" y1="202.8" x2="782.0" y2="202.8" stroke="#e2e8f0"/>
+<text x="474.0" y="206.8" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">1,768</text>
+<line x1="482.0" y1="145.0" x2="782.0" y2="145.0" stroke="#e2e8f0"/>
+<text x="474.0" y="149.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">2,358</text>
+<rect x="521.3" y="170.1" width="71.4" height="205.9" fill="#2563eb"/>
+<line x1="557.0" y1="170.7" x2="557.0" y2="169.8" stroke="#0f172a"/>
+<text x="557.0" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">1-SM units</text>
+<rect x="671.3" y="170.2" width="71.4" height="205.8" fill="#d97706"/>
+<line x1="707.0" y1="170.2" x2="707.0" y2="170.2" stroke="#0f172a"/>
+<text x="707.0" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">2-SM units</text>
+<text x="632.0" y="420.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b" text-anchor="middle">TFLOP/s</text>
+<text x="1028.0" y="119.0" font-family="Arial, sans-serif" font-size="14" fill="#334155" text-anchor="middle" font-weight="700">Device clock telemetry</text>
+<line x1="878.0" y1="376.0" x2="1178.0" y2="376.0" stroke="#e2e8f0"/>
+<text x="870.0" y="380.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">0</text>
+<line x1="878.0" y1="318.2" x2="1178.0" y2="318.2" stroke="#e2e8f0"/>
+<text x="870.0" y="322.2" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">538</text>
+<line x1="878.0" y1="260.5" x2="1178.0" y2="260.5" stroke="#e2e8f0"/>
+<text x="870.0" y="264.5" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">1,075</text>
+<line x1="878.0" y1="202.8" x2="1178.0" y2="202.8" stroke="#e2e8f0"/>
+<text x="870.0" y="206.8" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">1,613</text>
+<line x1="878.0" y1="145.0" x2="1178.0" y2="145.0" stroke="#e2e8f0"/>
+<text x="870.0" y="149.0" font-family="Arial, sans-serif" font-size="10" fill="#334155" text-anchor="end">2,150</text>
+<rect x="917.3" y="171.7" width="71.4" height="204.3" fill="#2563eb"/>
+<line x1="953.0" y1="172.7" x2="953.0" y2="171.2" stroke="#0f172a"/>
+<text x="953.0" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">1-SM units</text>
+<rect x="1067.3" y="169.8" width="71.4" height="206.2" fill="#d97706"/>
+<line x1="1103.0" y1="169.8" x2="1103.0" y2="169.8" stroke="#0f172a"/>
+<text x="1103.0" y="399.0" font-family="Arial, sans-serif" font-size="11" fill="#334155" text-anchor="middle">2-SM units</text>
+<text x="1028.0" y="420.0" font-family="Arial, sans-serif" font-size="11" fill="#64748b" text-anchor="middle">MHz</text>
+<text x="34.0" y="470.0" font-family="Arial, sans-serif" font-size="11" fill="#334155">Power averages are time-weighted; polling samples are not independent repetitions.</text>
+</svg>

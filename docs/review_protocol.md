@@ -1,8 +1,11 @@
 # Tutor review: protocol v2 and controlled closure
 
-This branch implements the measurement changes required before a new acquisition.
-Local CPU checks do not establish that the new CUDA kernels, graph capture or profiler
-paths work on a B300. A passing server pilot and review of its raw evidence precede finals.
+This protocol was executed in study-20261021T202311Z on 21 October 2026.
+The B300 pilot passed on source commit 5f6902c and all final acquisition stages
+completed on that exact source/environment. Independent CPU regeneration
+reproduced all nine CSVs and seven SVGs. The archive, checksum and execution
+log are linked from the repository README. The rules below define the
+measurement design and how to reproduce a new population.
 
 ## Fixed scope
 
@@ -136,5 +139,4 @@ is retained and constrains the hypothesis.
    until existing links and release assets have been checked; do not move old tags to hide
    the mismatch. If Zenodo is used, archive this accepted release and cite its DOI.
 
-No final acquisition, manuscript numerical update, tag deletion or release publication is
-performed by this branch's pilot setup. The repository's historical evidence stays unchanged.
+The completed acquisition and current summaries are published together on this review branch. Historical SASS and tag targets remain explicitly historical; an optional DOI must refer to the accepted archive and its recorded source identity.
