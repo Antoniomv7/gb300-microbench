@@ -4,9 +4,11 @@ import copy
 import csv
 import json
 import math
+import sys
 import tempfile
 import unittest
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 from analysis import analyze, figures
@@ -156,6 +158,12 @@ class PowerTests(unittest.TestCase):
 
 
 class TimingTests(unittest.TestCase):
+    def fake_cutlass_modules(self, helper):
+        package = ModuleType("cutlass")
+        package.__path__ = []
+        package.torch = helper
+        return patch.dict(sys.modules, {"cutlass": package, "cutlass.torch": helper})
+
     def timer(self):
         timer = PairedTimer.__new__(PairedTimer)
         timer.reverse = False
@@ -195,17 +203,36 @@ class TimingTests(unittest.TestCase):
     def test_example_stream_helper_is_restored_on_failure(self):
         original = lambda: 0
         helper = SimpleNamespace(default_stream=original, current_stream=lambda: 7)
-        with self.assertRaises(RuntimeError):
-            with example_current_stream(SimpleNamespace(cutlass_torch=helper)):
-                self.assertEqual(helper.default_stream(), 7)
-                raise RuntimeError("example failed")
+        with self.fake_cutlass_modules(helper):
+            with self.assertRaises(RuntimeError):
+                with example_current_stream():
+                    self.assertEqual(helper.default_stream(), 7)
+                    raise RuntimeError("example failed")
         self.assertIs(helper.default_stream, original)
 
     def test_example_requires_non_default_current_stream(self):
         helper = SimpleNamespace(default_stream=lambda: 0, current_stream=lambda: 0)
-        with self.assertRaises(ValueError):
-            with example_current_stream(SimpleNamespace(cutlass_torch=helper)):
-                pass
+        with self.fake_cutlass_modules(helper):
+            with self.assertRaises(ValueError):
+                with example_current_stream():
+                    pass
+
+    def test_nvfp4_local_import_reaches_paired_timer_on_current_stream(self):
+        # The pinned NVFP4 run() imports this helper locally, so the example
+        # module has no cutlass_torch attribute for an adapter to discover.
+        def example_run(timer):
+            import cutlass.torch as cutlass_torch
+            stream = cutlass_torch.default_stream()
+            return timer.benchmark(lambda: None, stream=stream, kernel_arguments=object(),
+                                   warmup_iterations=5, iterations=20)
+
+        helper = SimpleNamespace(default_stream=lambda: 0, current_stream=lambda: 7)
+        timer = self.timer()
+        with self.fake_cutlass_modules(helper):
+            with example_current_stream():
+                self.assertEqual(example_run(timer), 10)
+            self.assertEqual(helper.default_stream(), 0)
+        self.assertEqual([call["stream"] for call in self.calls], [7, 7])
 
 
 class AcquisitionTests(unittest.TestCase):

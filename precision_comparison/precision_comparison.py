@@ -8,6 +8,7 @@ mismatched run; analysis/analyze.py computes the two published summaries from th
 """
 
 import argparse
+import contextlib
 import csv
 import importlib.util
 import json
@@ -97,8 +98,10 @@ def run(cublaslt, timer):
                       file=sys.stderr, flush=True)
                 # The hooks only record the operands run() creates.
                 timer.reverse = repetition % 2 == 1
+                stream_scope = (example_current_stream() if precision == "nvfp4"
+                                else contextlib.nullcontext())
                 with cublaslt.capture(module, precision) as captured, \
-                        timer.intercept(), example_current_stream(module):
+                        timer.intercept(), stream_scope:
                     # Validate each format and shape once before timing its repetitions.
                     samples.append(measure(module, cutlass, precision, shape, WARMUP_ITERATIONS,
                                            ITERATIONS, verify=repetition == 0))

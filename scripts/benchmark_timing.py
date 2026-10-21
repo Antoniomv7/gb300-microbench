@@ -9,17 +9,16 @@ HOST_METHOD = "host_events"
 
 
 @contextlib.contextmanager
-def example_current_stream(module):
+def example_current_stream():
     """Route the pinned NVFP4 run()'s default-stream helper to the current stream.
 
-    The example explicitly calls cutlass_torch.default_stream(), ignoring the
-    surrounding PyTorch stream context. Restore the helper even if run() fails.
+    The example imports cutlass.torch locally inside run(), then explicitly calls
+    default_stream(). Patch that shared module directly rather than looking for
+    an attribute on the example module. Restore the helper even if run() fails.
     No upstream file or kernel implementation is edited.
     """
-    helper = getattr(module, "cutlass_torch", None)
-    if helper is None:
-        yield
-        return
+    import cutlass.torch as helper
+
     if int(helper.current_stream()) == 0:
         raise ValueError("the example requires a non-default current stream")
     original = helper.default_stream

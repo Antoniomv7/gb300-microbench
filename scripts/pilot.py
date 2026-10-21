@@ -29,6 +29,10 @@ def run(directory, name, command):
         result = subprocess.run([str(v) for v in command], cwd=ROOT, text=True,
                                 stdout=subprocess.PIPE, stderr=error, check=False)
     (directory/f"{name}.stdout").write_text(result.stdout)
+    if result.returncode:
+        error_path = directory/f"{name}.stderr.log"
+        print(f"pilot: {name} failed; last stderr lines ({error_path}):", file=sys.stderr)
+        print("\n".join(error_path.read_text().splitlines()[-40:]), file=sys.stderr, flush=True)
     result.check_returncode()
     return list(csv.DictReader(io.StringIO(result.stdout))) if result.stdout.strip() else []
 
