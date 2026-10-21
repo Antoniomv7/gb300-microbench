@@ -1,0 +1,3 @@
+method,campaign_1_power_w,campaign_2_power_w,campaign_3_power_w,mean_power_w,stdev_power_w,cv_percent,mean_sustained_tflops,mean_sm_clock_mhz,mean_temperature_c,minimum_gpu_duty_fraction,warmup_ms,duration_ms
+umma_1sm,1094.283011,1096.170026,1096.183210,1095.545416,1.093294,0.099794,2102.002628,1901.768066,66.632512,0.999515,10000,30000
+umma_2sm,1090.279597,1092.049725,1091.792849,1091.374057,0.956493,0.087641,2100.580827,1919.279685,64.119933,0.999508,10000,30000

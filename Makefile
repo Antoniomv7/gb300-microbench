@@ -18,11 +18,12 @@ CAMPAIGNS ?=
 PROFILE_CACHE ?= hot
 GEMM_SUMMARY ?=
 STUDY ?=
+PILOT ?=
 export IMAGE_TAG
 
 .DEFAULT_GOAL := help
 .PHONY: help image build compile clean exp1-memory exp2-umma exp3-scaling exp4-gemm precision \
-	final-study campaign analyze gemm-profile regenerate
+	final-study campaign analyze gemm-profile regenerate pilot power check-static
 
 help:
 	@echo "Setup: make image, then export BLACKWELL_GPU_INDEX=<index of an idle B300>."
@@ -32,7 +33,10 @@ help:
 	@echo "  make exp3-scaling  III  whole-device UMMA scaling, with nvidia-smi clock telemetry"
 	@echo "  make exp4-gemm     IV   BF16 CuTe DSL variants versus cuBLASLt"
 	@echo "  make precision     V    BF16, FP8 and NVFP4 with CuTe DSL and cuBLASLt"
-	@echo "  make final-study        I-IV three times, V, hot-cache GEMM profile, all summaries"
+	@echo "  make power              sustained full-device UMMA operating power"
+	@echo "  make check-static       CPU validation of acquisition and analysis helpers"
+	@echo "  make pilot              validate the new GPU paths without producing final data"
+	@echo "  make final-study PILOT=runs/pilot-<UTC>   requires that passing pilot's exact commit"
 	@echo "Underlying steps:"
 	@echo "  make campaign                                   I-IV once"
 	@echo "  make analyze CAMPAIGNS=\"dir1 dir2 dir3\"          I-IV summaries (CPU only)"
@@ -98,6 +102,17 @@ precision: build
 campaign: build
 	$(GPU) python3 scripts/run_campaign.py --output runs/campaign-$(STAMP)
 
+check-static:
+	bash -n scripts/run_gpu.sh
+	python3 -c 'import ast,pathlib; [ast.parse(p.read_text(),filename=str(p)) for d in ("scripts","analysis","gemm_comparison","precision_comparison","tests") for p in pathlib.Path(d).glob("*.py")]'
+	python3 -m unittest discover -s tests -v
+
+pilot: build
+	$(GPU) python3 scripts/pilot.py --output runs/pilot-$(STAMP)
+
+power: build
+	$(GPU) python3 scripts/power_measure.py --output runs/power-$(STAMP)
+
 analyze:
 	python3 analysis/analyze.py --campaigns $(CAMPAIGNS) --output runs/analysis-$(STAMP)
 
@@ -112,10 +127,13 @@ gemm-profile: build
 # The binaries are built once; every step runs in the container except the CPU-only analysis.
 final-study: FINAL := runs/study-$(STAMP)
 final-study: build
-	$(GPU) python3 scripts/run_campaign.py --output $(FINAL)/campaign-1
-	$(GPU) python3 scripts/run_campaign.py --output $(FINAL)/campaign-2
-	$(GPU) python3 scripts/run_campaign.py --output $(FINAL)/campaign-3
+	@test -n "$(PILOT)" || { echo "set PILOT to a passing pilot from this source commit" >&2; exit 2; }
+	$(GPU) python3 scripts/pilot.py --verify "$(PILOT)"
+	$(GPU) python3 scripts/run_campaign.py --campaign-index 1 --output $(FINAL)/campaign-1
+	$(GPU) python3 scripts/run_campaign.py --campaign-index 2 --output $(FINAL)/campaign-2
+	$(GPU) python3 scripts/run_campaign.py --campaign-index 3 --output $(FINAL)/campaign-3
 	$(GPU) python3 precision_comparison/precision_comparison.py --output $(FINAL)/precision
+	$(GPU) python3 scripts/power_measure.py --output $(FINAL)/power
 	$(GPU) python3 scripts/profile_gemm.py --cache-state hot --output $(FINAL)/gemm-profile-hot
 	python3 analysis/analyze.py --study $(FINAL) --output $(FINAL)/analysis
 

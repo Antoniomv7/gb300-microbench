@@ -11,7 +11,7 @@ constexpr int kMLocal = 128;
 template <int N, int DEPTH>
 __device__ __forceinline__ void umma_2sm_body(int64_t iterations, TimingMode timing_mode,
                                                float* __restrict__ g_d_out,
-                                               unsigned long long* __restrict__ g_elapsed_cycles) {
+                                               LoopTiming* __restrict__ g_elapsed_cycles) {
     const int tid = threadIdx.x;
     const int cta_rank = static_cast<int>(cuda::ptx::get_sreg_cluster_ctarank());
     constexpr int kNLocal = N / kClusterCtas;
@@ -67,10 +67,9 @@ __device__ __forceinline__ void umma_2sm_body(int64_t iterations, TimingMode tim
     constexpr uint32_t idesc = make_umma_descriptor<kMGlobal, N>();
     const uint32_t mbar_addr = static_cast<uint32_t>(__cvta_generic_to_shared(&mbar));
 
-    unsigned long long elapsed_cycles = 0;
-    uint64_t start_clock = 0, end_clock = 0;
+    ClockStamp begin{}, end{};
     if (is_leader && cta_rank == 0 && timing_mode == TimingMode::kTimed)
-        asm volatile("mov.u64 %0, %%clock64;" : "=l"(start_clock) : : "memory");
+        begin = clock_stamp();
 
     uint32_t parity = 0;
     for (int64_t iteration = 0; iteration < iterations; ++iteration) {
@@ -92,10 +91,10 @@ __device__ __forceinline__ void umma_2sm_body(int64_t iterations, TimingMode tim
     }
 
     if (is_leader && cta_rank == 0 && timing_mode == TimingMode::kTimed) {
-        asm volatile("mov.u64 %0, %%clock64;" : "=l"(end_clock) : : "memory");
-        elapsed_cycles = static_cast<unsigned long long>(end_clock - start_clock);
+        end = clock_stamp();
     }
-    if (is_leader && cta_rank == 0) g_elapsed_cycles[0] = elapsed_cycles;
+    if (is_leader && cta_rank == 0 && timing_mode == TimingMode::kTimed)
+        save_loop_timing(g_elapsed_cycles, begin, end);
 
     __syncthreads();
     tcgen05_fence_after_thread_sync();
@@ -130,7 +129,7 @@ __device__ __forceinline__ void umma_2sm_body(int64_t iterations, TimingMode tim
 #define UMMA_KERNEL(N, DEPTH)                                                        \
     extern "C" __global__ __cluster_dims__(2, 1, 1) __launch_bounds__(128)           \
     void umma_2sm_m256n##N##k16_d##DEPTH(int64_t iterations, TimingMode mode,         \
-                                         float* output, unsigned long long* cycles) { \
+                                         float* output, LoopTiming* cycles) { \
         umma_2sm_body<N, DEPTH>(iterations, mode, output, cycles);                    \
     }
 UMMA_KERNEL(64, 4) UMMA_KERNEL(64, 16) UMMA_KERNEL(64, 64) UMMA_KERNEL(64, 256)

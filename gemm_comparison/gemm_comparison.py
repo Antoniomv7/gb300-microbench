@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare three BF16 CuTe DSL kernels with the cuBLASLt heuristic."""
+"""Compare four BF16 CuTe DSL configurations with the cuBLASLt heuristic."""
 
 import argparse
 import csv
@@ -13,6 +13,10 @@ from pathlib import Path
 SHAPES = ((4096, 4096, 4096, 1), (8192, 8192, 8192, 1),
           (16384, 512, 4096, 1), (32768, 512, 4096, 1),
           (512, 16384, 4096, 1))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts.benchmark_timing import PairedTimer
+
 CANDIDATES = (
     {"method": "cutedsl", "variant": "nonpersistent_1cta", "module": "nonpersistent",
      "class": "DenseGemmKernel", "tile": (128, 128), "cluster": (1, 1),
@@ -23,11 +27,16 @@ CANDIDATES = (
     {"method": "cutedsl", "variant": "persistent_2cta", "module": "persistent",
      "class": "PersistentDenseGemmKernel", "tile": (256, 128), "cluster": (2, 1),
      "persistent": True, "use_2cta": True},
+    {"method": "cutedsl", "variant": "persistent_2cta_256x256", "module": "persistent",
+     "class": "PersistentDenseGemmKernel", "tile": (256, 256), "cluster": (2, 1),
+     "persistent": True, "use_2cta": True},
     {"method": "cublaslt", "variant": "heuristic_first_supported"},
 )
 FIELDS = ("shape_index", "shape_id", "m", "n", "k", "l", "candidate_index",
           "method", "variant", "kernel_time_ms", "tflops",
-          "throughput_ratio_vs_cublaslt", "correctness")
+          "throughput_ratio_vs_cublaslt", "correctness", "timing_method",
+          "host_event_kernel_time_ms", "host_to_graph_time_ratio", "timing_order",
+          "tile_m", "tile_n", "cluster_m", "cluster_n")
 EXAMPLES = Path("/opt/cutlass/examples/python/CuTeDSL/cute/blackwell/kernel/dense_gemm")
 BRIDGE_LIBRARY = Path(__file__).resolve().parents[1] / "build/gemm_comparison/libcublaslt_bridge.so"
 ATOL, RTOL = 0.1, 1e-5
@@ -175,28 +184,29 @@ def prepare_candidate(specification, modules, shape, operands, reference, contex
     return label, launch, bridge
 
 
-def measure_candidate(specification, modules, shape, operands, reference, context, warmup, count):
+def measure_candidate(specification, modules, shape, operands, reference, context, warmup, count, timer):
     torch, _, _, torch_stream, _ = context
     label, launch, bridge = prepare_candidate(specification, modules, shape, operands,
-                                              reference, context, warmup)
+                                              reference, context, 0)
     try:
-        start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        start.record(torch_stream)
-        for _ in range(count):
-            launch()
-        end.record(torch_stream)
-        torch.cuda.synchronize()
-        duration = start.elapsed_time(end) / count
-        if not math.isfinite(duration) or duration <= 0:
-            raise RuntimeError(f"{label}: invalid CUDA-event duration")
-        return {"correctness": "PASS", "kernel_time_ms": duration,
-                "tflops": 2 * math.prod(shape) / duration / 1e9}
+        from cutlass.cute import testing
+        from cuda.bindings import driver
+        microseconds = timer.benchmark(
+            launch, kernel_arguments=testing.JitArguments(),
+            stream=driver.CUstream(torch_stream.cuda_stream),
+            warmup_iterations=warmup, iterations=count)
+        validate_result(torch, operands["output"], reference, label)
+        timing = dict(timer.last)
+        host_ms = timing.pop("host_event_time_us") / 1000
+        return {"correctness": "PASS", "kernel_time_ms": microseconds / 1000,
+                "tflops": 2 * math.prod(shape) / microseconds / 1e6,
+                "host_event_kernel_time_ms": host_ms, **timing}
     finally:
         if bridge is not None:
             bridge.close()
 
 
-def run(warmup, iterations):
+def run(warmup, iterations, campaign_index=1, pilot=False):
     import cutlass
     import cutlass.cute as cute
     import torch
@@ -204,34 +214,46 @@ def run(warmup, iterations):
 
     modules = {"nonpersistent": load_module("dense_gemm", "dense_gemm.py"),
                "persistent": load_module("dense_gemm_persistent", "dense_gemm_persistent.py")}
-    torch_stream = torch.cuda.current_stream()
+    torch_stream = torch.cuda.Stream()
+    timer = PairedTimer(reverse=campaign_index % 2 == 0)
     context = (torch, cutlass, cute, torch_stream, driver.CUstream(torch_stream.cuda_stream))
     rows = []
-    for shape_index, shape in enumerate(SHAPES):
-        # Reuse identical operands and reference across every implementation.
-        operands = create_operands(torch, cutlass, modules["nonpersistent"], shape)
-        reference = reference_result(torch, operands)
-        measurements = [measure_candidate(candidate, modules, shape, operands, reference,
-                                          context, warmup, iterations)
-                        for candidate in CANDIDATES]
-        # The final candidate is the cuBLASLt baseline for this geometry.
-        baseline = measurements[-1]["tflops"]
-        for index, (candidate, measured) in enumerate(zip(CANDIDATES, measurements)):
-            rows.append({"shape_index": shape_index, "shape_id": "x".join(map(str, shape)),
-                         **dict(zip(("m", "n", "k", "l"), shape)),
-                         "candidate_index": index, "method": candidate["method"],
-                         "variant": candidate["variant"], **measured,
-                         "throughput_ratio_vs_cublaslt": measured["tflops"] / baseline})
-        del reference, operands, measurements
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
+    with torch.cuda.stream(torch_stream):
+        for shape_index, shape in enumerate(SHAPES[:1] if pilot else SHAPES):
+            # Reuse identical operands and reference across every implementation.
+            operands = create_operands(torch, cutlass, modules["nonpersistent"], shape)
+            reference = reference_result(torch, operands)
+            order = list(range(len(CANDIDATES)))
+            if campaign_index % 2 == 0:
+                order.reverse()
+            measurements = {}
+            for index in order:
+                measurements[index] = measure_candidate(CANDIDATES[index], modules, shape,
+                    operands, reference, context, warmup, iterations, timer)
+            baseline = measurements[len(CANDIDATES)-1]["tflops"]
+            for index, candidate in enumerate(CANDIDATES):
+                measured = measurements[index]
+                rows.append({"shape_index": shape_index, "shape_id": "x".join(map(str, shape)),
+                             **dict(zip(("m", "n", "k", "l"), shape)),
+                             "candidate_index": index, "method": candidate["method"],
+                             "variant": candidate["variant"], **measured,
+                             "throughput_ratio_vs_cublaslt": measured["tflops"] / baseline,
+                             "tile_m": candidate.get("tile", ("", ""))[0],
+                             "tile_n": candidate.get("tile", ("", ""))[1],
+                             "cluster_m": candidate.get("cluster", ("", ""))[0],
+                             "cluster_n": candidate.get("cluster", ("", ""))[1]})
+            del reference, operands, measurements
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
     return rows
 
 
 def main():
     parser = argparse.ArgumentParser(description="Compare BF16 CuTe DSL GEMM with cuBLASLt.")
-    parser.add_argument("--warmup-iterations", type=int, default=2)
-    parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument("--warmup-iterations", type=int, default=5)
+    parser.add_argument("--iterations", type=int, default=20)
+    parser.add_argument("--campaign-index", type=int, choices=(1, 2, 3), default=1)
+    parser.add_argument("--pilot", action="store_true")
     args = parser.parse_args()
     if args.warmup_iterations < 0 or args.iterations <= 0:
         parser.error("warm-up must be non-negative and iterations must be positive")
@@ -240,7 +262,7 @@ def main():
     saved_stdout = os.dup(1)
     try:
         os.dup2(2, 1)
-        rows = run(args.warmup_iterations, args.iterations)
+        rows = run(args.warmup_iterations, args.iterations, args.campaign_index, args.pilot)
     finally:
         sys.stdout.flush()
         os.dup2(saved_stdout, 1)

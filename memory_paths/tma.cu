@@ -1,4 +1,5 @@
 // TMA global-to-shared bandwidth.
+// Methodological reference: SemiAnalysisAI/microbench-blackwell; see docs/provenance.md.
 
 #include <cudaTypedefs.h>
 #include <cuda/ptx>

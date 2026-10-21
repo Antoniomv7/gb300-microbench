@@ -1,91 +1,126 @@
 #!/usr/bin/env python3
-"""Sample SM clock, power and temperature with nvidia-smi during one benchmark."""
+"""Device telemetry. Polling cadence is not the sensor's measurement bandwidth."""
 
 import csv
 import datetime as dt
+import math
 import statistics
 import subprocess
 import threading
 import time
 from pathlib import Path
 
-QUERY_FIELDS = ("timestamp", "clocks.sm", "power.draw", "temperature.gpu")
-COLUMNS = ("sample_index", "unix_s", "received_unix_s", "timestamp",
-           "sm_clock_mhz", "power_w", "temperature_c")
+COLUMNS = ("sample_index", "unix_s", "received_unix_s", "timestamp", "sm_clock_mhz",
+           "power_average_w", "temperature_c", "power_instant_w")
 MAX_CLOCK_SKEW_S = 1.0
 
 
+def available(gpu, field):
+    result = subprocess.run(["nvidia-smi", "-i", str(gpu), f"--query-gpu={field}",
+                             "--format=csv,noheader,nounits"], capture_output=True, text=True)
+    try:
+        return result.returncode == 0 and math.isfinite(float(result.stdout.strip()))
+    except ValueError:
+        return False
+
+
 class ClockSampler:
-    """Stream nvidia-smi samples on a background thread while a benchmark runs.
-
-    nvidia-smi stamps every sample with the host wall clock, which is the clock the
-    benchmark also reports for each timed launch, so samples can be attributed to a
-    configuration afterwards without perturbing the measured kernels.
-    """
-
     def __init__(self, gpu, interval_ms):
-        self.gpu = str(gpu)
-        self.interval_ms = int(interval_ms)
+        self.gpu, self.interval_ms = str(gpu), int(interval_ms)
         self.samples = []
-        self._process = None
-        self._reader = None
+        self._process = self._reader = None
+        if self.interval_ms < 1:
+            raise ValueError("telemetry interval must be positive")
 
     def __enter__(self):
-        command = ["nvidia-smi", "-i", self.gpu, f"--query-gpu={','.join(QUERY_FIELDS)}",
+        self.average_field = next((f for f in ("power.draw.average", "power.draw")
+                                   if available(self.gpu, f)), None)
+        self.instant_field = "power.draw.instant" if available(
+            self.gpu, "power.draw.instant") else None
+        self.fields = ["timestamp", "clocks.sm", "temperature.gpu"] + [
+            f for f in (self.average_field, self.instant_field) if f]
+        command = ["nvidia-smi", "-i", self.gpu, f"--query-gpu={','.join(self.fields)}",
                    "--format=csv,noheader,nounits", "-lms", str(self.interval_ms)]
         self._process = subprocess.Popen(command, stdout=subprocess.PIPE,
                                          stderr=subprocess.DEVNULL, text=True, bufsize=1)
         self._reader = threading.Thread(target=self._read, daemon=True)
         self._reader.start()
-        # Sampling must already be running when the first timed launch starts.
         deadline = time.monotonic() + 15
         while not self.samples and time.monotonic() < deadline:
+            if self._process.poll() is not None:
+                break
             time.sleep(0.005)
         if not self.samples:
             self.__exit__(None, None, None)
-            raise RuntimeError("nvidia-smi produced no clock samples")
+            raise RuntimeError("nvidia-smi produced no valid telemetry")
         return self
 
     def _read(self):
         for line in self._process.stdout:
             received = time.time()
-            fields = [value.strip() for value in line.split(",")]
-            if len(fields) != len(QUERY_FIELDS):
+            fields = [v.strip() for v in line.split(",")]
+            if len(fields) != len(self.fields):
                 continue
+            values = dict(zip(self.fields, fields))
             try:
-                moment = dt.datetime.strptime(fields[0], "%Y/%m/%d %H:%M:%S.%f").timestamp()
-                values = [float(field) for field in fields[1:]]
+                moment = dt.datetime.strptime(values["timestamp"], "%Y/%m/%d %H:%M:%S.%f").timestamp()
+                clock, temperature = float(values["clocks.sm"]), float(values["temperature.gpu"])
+                if not (math.isfinite(clock) and clock > 0 and math.isfinite(temperature)):
+                    continue
             except ValueError:
                 continue
-            self.samples.append((moment, received, fields[0], *values))
+            def power(field):
+                try:
+                    value = float(values.get(field, ""))
+                    return value if math.isfinite(value) and value >= 0 else None
+                except ValueError:
+                    return None
+            self.samples.append((moment, received, values["timestamp"], clock,
+                                 power(self.average_field), temperature, power(self.instant_field)))
+
+    def cover_through(self, moment):
+        deadline = time.monotonic() + 5
+        while (not self.samples or self.samples[-1][0] < moment) and time.monotonic() < deadline:
+            if self._process.poll() is not None:
+                break
+            time.sleep(0.01)
+        if not self.samples or self.samples[-1][0] < moment:
+            raise RuntimeError("telemetry does not cover the end of the measurement window")
 
     def __exit__(self, *exception):
-        self._process.terminate()
+        if self._process is None:
+            return False
+        if self._process.poll() is None:
+            self._process.terminate()
         try:
             self._process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             self._process.kill()
             self._process.wait(timeout=10)
-        # The reader drains the pipe to EOF before the handle is released.
         self._reader.join(timeout=10)
         self._process.stdout.close()
         return False
 
     def verify(self):
-        """Reject samples whose own timestamps disagree with this process's clock."""
         if len(self.samples) < 2:
-            raise RuntimeError("fewer than two clock samples were collected")
-        skew = statistics.median(sample[1] - sample[0] for sample in self.samples)
+            raise RuntimeError("fewer than two telemetry samples")
+        moments = [s[0] for s in self.samples]
+        if any(b < a for a, b in zip(moments, moments[1:])):
+            raise RuntimeError("telemetry timestamps moved backwards")
+        skew = statistics.median(s[1]-s[0] for s in self.samples)
         if abs(skew) > MAX_CLOCK_SKEW_S:
-            raise RuntimeError(f"nvidia-smi timestamps are skewed by {skew:.3f} s")
-        return {"sample_count": len(self.samples), "interval_ms": self.interval_ms,
-                "median_skew_s": skew, "first_unix_s": self.samples[0][0],
-                "last_unix_s": self.samples[-1][0]}
+            raise RuntimeError(f"telemetry clock skew {skew:.3f} s")
+        return {"sample_count": len(self.samples), "poll_interval_ms": self.interval_ms,
+                "power_average_field": self.average_field, "power_instant_field": self.instant_field,
+                "power_scope": "GPU board, not CPU+GPU module",
+                "sensor_bandwidth": "not inferred from polling cadence", "median_skew_s": skew,
+                "first_unix_s": moments[0], "last_unix_s": moments[-1]}
 
     def write(self, path):
         with Path(path).open("w", newline="", encoding="utf-8") as output:
             writer = csv.writer(output, lineterminator="\n")
             writer.writerow(COLUMNS)
-            for index, sample in enumerate(self.samples):
-                writer.writerow([index, f"{sample[0]:.6f}", f"{sample[1]:.6f}", sample[2],
-                                 f"{sample[3]:.1f}", f"{sample[4]:.2f}", f"{sample[5]:.1f}"])
+            for index, s in enumerate(self.samples):
+                writer.writerow([index, f"{s[0]:.9f}", f"{s[1]:.9f}", s[2], s[3],
+                                 "" if s[4] is None else s[4], s[5],
+                                 "" if s[6] is None else s[6]])

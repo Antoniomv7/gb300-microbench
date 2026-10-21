@@ -24,7 +24,7 @@ from scripts import gpu_telemetry, metadata, ncu_capture  # noqa: E402
 # Final measurement parameters of every campaign and single-experiment run.
 MEMORY = {"working_set_mib": 512, "passes": 32, "warmup_ms": 2000, "repetitions": 30}
 UMMA = {"iterations": 1000, "warmup_iterations": 10, "repetitions": 30}
-GEMM = {"warmup_iterations": 2, "iterations": 10}
+GEMM = {"warmup_iterations": 5, "iterations": 20, "timing_method": "cuda_graph"}
 MEMORY_METHODS = ("ldgsts", "tma")
 UMMA_METHODS = ("umma_1sm", "umma_2sm")
 TELEMETRY_INTERVAL_MS = 50
@@ -92,11 +92,14 @@ def telemetry_overlap(rows, samples):
             for key, spans in sorted(windows.items())}
 
 
-def umma_device_scaling(raw):
+def umma_device_scaling(raw, campaign_index=1):
     """Time the four scaling configurations while sampling the SM clock alongside."""
     gpu = os.environ.get("BLACKWELL_GPU_UUID", "0")
     with gpu_telemetry.ClockSampler(gpu, TELEMETRY_INTERVAL_MS) as sampler:
-        rows = run(["build/umma_throughput/umma_device_scaling", *UMMA_ARGUMENTS])
+        rows = run(["build/umma_throughput/umma_device_scaling", *UMMA_ARGUMENTS,
+                    "--loop-output", str(raw / "umma_device_scaling_loops.csv"),
+                    "--reverse-order", str(int(campaign_index % 2 == 0))])
+        sampler.cover_through(max(float(row["host_end_unix_s"]) for row in rows))
     summary = sampler.verify()
     sampler.write(raw / "umma_device_scaling_telemetry.csv")
     summary["samples_per_configuration"] = telemetry_overlap(rows, sampler.samples)
@@ -106,11 +109,11 @@ def umma_device_scaling(raw):
     return summary
 
 
-def gemm_comparison(raw):
+def gemm_comparison(raw, campaign_index=1):
     rows = run([sys.executable, "gemm_comparison/gemm_comparison.py",
                 "--warmup-iterations", str(GEMM["warmup_iterations"]),
-                "--iterations", str(GEMM["iterations"])])
-    write_rows(raw / "gemm_comparison.csv", rows, 20)
+                "--iterations", str(GEMM["iterations"]), "--campaign-index", str(campaign_index)])
+    write_rows(raw / "gemm_comparison.csv", rows, 25)
 
 
 EXPERIMENTS = {"memory_paths": memory_paths, "umma_throughput": umma_throughput,
@@ -123,6 +126,7 @@ def main():
                         help="new run directory; an existing one is never reused")
     parser.add_argument("--experiments", nargs="+", choices=EXPERIMENTS, default=list(EXPERIMENTS),
                         help="run only these experiments (default: all four)")
+    parser.add_argument("--campaign-index", type=int, choices=(1, 2, 3), default=1)
     args = parser.parse_args()
     experiments = [name for name in EXPERIMENTS if name in args.experiments]
 
@@ -131,12 +135,14 @@ def main():
     raw = directory / "raw"
     raw.mkdir()
     # Identify the GPU and the software before any measurement.
-    record = {"experiments": experiments, "created_utc": metadata.utc_now(),
+    record = {"experiments": experiments, "campaign_index": args.campaign_index,
+              "created_utc": metadata.utc_now(),
               **metadata.environment(),
               "parameters": {"memory_paths": MEMORY, "umma": UMMA, "gemm_comparison": GEMM,
                              "telemetry_interval_ms": TELEMETRY_INTERVAL_MS}}
     for name in experiments:
-        result = EXPERIMENTS[name](raw)
+        result = (EXPERIMENTS[name](raw, args.campaign_index)
+                  if name in ("umma_device_scaling", "gemm_comparison") else EXPERIMENTS[name](raw))
         if name == "umma_device_scaling":
             record["telemetry"] = result
 

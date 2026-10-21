@@ -1,4 +1,5 @@
 #pragma once
+// Methodological references and local extensions are recorded in docs/provenance.md.
 
 #include <algorithm>
 #include <cstdarg>
@@ -21,6 +22,35 @@ constexpr int kK = 16;
 constexpr const char* kMethodName = UMMA_METHOD;
 
 enum class TimingMode : int32_t { kUntimed = 0, kTimed = 1 };
+
+// Bracket the cycle read with global timestamps. The sum of the two brackets
+// bounds the uncertainty in the elapsed time; no device-wide clock is assumed.
+struct ClockStamp { uint64_t before_ns, cycles, after_ns; };
+struct LoopTiming {
+    uint64_t cycles, elapsed_ns, timer_bracket_ns, start_ns, end_ns;
+    uint32_t smid;
+};
+
+__device__ __forceinline__ ClockStamp clock_stamp() {
+    ClockStamp stamp;
+    asm volatile("mov.u64 %0, %%globaltimer;\n\t"
+                 "mov.u64 %1, %%clock64;\n\t"
+                 "mov.u64 %2, %%globaltimer;"
+                 : "=l"(stamp.before_ns), "=l"(stamp.cycles), "=l"(stamp.after_ns)
+                 : : "memory");
+    return stamp;
+}
+
+__device__ __forceinline__ void save_loop_timing(LoopTiming* output,
+                                               ClockStamp begin, ClockStamp end) {
+    const uint64_t start_ns = begin.before_ns + (begin.after_ns - begin.before_ns) / 2;
+    const uint64_t end_ns = end.before_ns + (end.after_ns - end.before_ns) / 2;
+    uint32_t smid;
+    asm volatile("mov.u32 %0, %%smid;" : "=r"(smid));
+    *output = {end.cycles - begin.cycles, end_ns - start_ns,
+               begin.after_ns - begin.before_ns + end.after_ns - end.before_ns,
+               start_ns, end_ns, smid};
+}
 
 [[noreturn]] inline void fail(const char* format, ...) {
     std::va_list args;
@@ -156,11 +186,19 @@ struct CliConfig {
     int64_t iterations = 0;
     int64_t warmup_iterations = 0;
     int64_t repetitions = 0;
+    int64_t warmup_ms = 10000;
+    int64_t duration_ms = 30000;
+    bool instrument_loops = true;
+    std::string only_method, only_scale, loop_output;
+    bool reverse_order = false;
 };
 
 inline void print_usage(std::FILE* output) {
     std::fprintf(output, "Usage: %s --run-kind KIND [--n N --depth N] --iterations N "
-                         "--warmup-iterations N --repetitions N\n", kMethodName);
+                         "--warmup-iterations N --repetitions N [--loop-output PATH] "
+                         "[--instrument-loops 0|1] [--only-method umma_1sm|umma_2sm] "
+                         "[--only-scale isolated|device_scale] [--reverse-order 0|1] "
+                         "[--warmup-ms N --duration-ms N]\n", kMethodName);
 }
 
 inline bool parse_cli(int argc, char** argv, CliConfig* config, std::string* error,
@@ -171,6 +209,9 @@ inline bool parse_cli(int argc, char** argv, CliConfig* config, std::string* err
         if (++index >= argc) { *error = "missing value for " + option; return false; }
         const std::string value = argv[index];
         if (option == "--run-kind") { config->run_kind = value; continue; }
+        if (device_scaling && option == "--only-method") { config->only_method = value; continue; }
+        if (device_scaling && option == "--only-scale") { config->only_scale = value; continue; }
+        if (device_scaling && option == "--loop-output") { config->loop_output = value; continue; }
         int64_t number = 0;
         if (!parse_int_arg(value, &number)) { *error = "invalid value for " + option; return false; }
         if (option == "--n") config->n = static_cast<int>(number);
@@ -178,11 +219,23 @@ inline bool parse_cli(int argc, char** argv, CliConfig* config, std::string* err
         else if (option == "--iterations") config->iterations = number;
         else if (option == "--warmup-iterations") config->warmup_iterations = number;
         else if (option == "--repetitions") config->repetitions = number;
+        else if (device_scaling && option == "--warmup-ms") config->warmup_ms = number;
+        else if (device_scaling && option == "--duration-ms") config->duration_ms = number;
+        else if (device_scaling && option == "--instrument-loops" && (number == 0 || number == 1))
+            config->instrument_loops = number != 0;
+        else if (device_scaling && option == "--reverse-order" && (number == 0 || number == 1))
+            config->reverse_order = number != 0;
         else { *error = "unknown argument: " + option; return false; }
     }
     if (config->help) return true;
-    if ((config->run_kind != "smoke" && config->run_kind != "benchmark") ||
+    if ((config->run_kind != "smoke" && config->run_kind != "benchmark" &&
+         !(device_scaling && config->run_kind == "sustained")) ||
         config->iterations < 1 || config->warmup_iterations < 0 || config->repetitions < 1 ||
+        config->warmup_ms < 0 || config->duration_ms < 1 ||
+        (!config->only_method.empty() && config->only_method != "umma_1sm" &&
+         config->only_method != "umma_2sm") ||
+        (!config->only_scale.empty() && config->only_scale != "isolated" &&
+         config->only_scale != "device_scale") ||
         (!device_scaling && (config->n != 64 && config->n != 128 && config->n != 256)) ||
         (!device_scaling && config->depth != 4 && config->depth != 16 &&
          config->depth != 64 && config->depth != 256)) {
@@ -192,7 +245,7 @@ inline bool parse_cli(int argc, char** argv, CliConfig* config, std::string* err
     return true;
 }
 
-using IsolatedKernel = void (*)(int64_t, TimingMode, float*, unsigned long long*);
+using IsolatedKernel = void (*)(int64_t, TimingMode, float*, LoopTiming*);
 
 struct IsolatedSpecialization {
     int n;
@@ -216,9 +269,9 @@ inline int run_isolated(const IsolatedSpecialization& spec, const CliConfig& con
                         int m, int group, int smem_bytes) {
     const size_t elements = static_cast<size_t>(m) * spec.n;
     float* output = nullptr;
-    unsigned long long* device_cycles = nullptr;
+    LoopTiming* device_cycles = nullptr;
     CUDA_CHECK_FATAL(cudaMalloc(&output, elements * sizeof(float)));
-    CUDA_CHECK_FATAL(cudaMalloc(&device_cycles, sizeof(unsigned long long)));
+    CUDA_CHECK_FATAL(cudaMalloc(&device_cycles, sizeof(LoopTiming)));
 
     const auto launch = [&](TimingMode mode, bool validate) {
         spec.kernel<<<group, kThreadsPerCta, smem_bytes>>>(config.iterations, mode,
@@ -239,19 +292,27 @@ inline int run_isolated(const IsolatedSpecialization& spec, const CliConfig& con
         launch(TimingMode::kUntimed, false);
 
     std::puts("method,sample_index,cta_group,m,n,depth,iterations,total_flops,"
-              "elapsed_cycles,cycles_per_umma,flops_per_cycle,correctness");
+              "elapsed_cycles,cycles_per_umma,flops_per_cycle,correctness,"
+              "loop_elapsed_ns,timer_bracket_ns,issuing_smid,effective_sm_clock_mhz,loop_tflops");
     const int64_t total_umma = config.iterations * spec.depth;
     const int64_t total_flops = 2 * static_cast<int64_t>(m) * spec.n * kK * total_umma;
     for (int64_t sample = 0; sample < config.repetitions; ++sample) {
         launch(TimingMode::kTimed, false);
-        unsigned long long cycles = 0;
-        CUDA_CHECK_FATAL(cudaMemcpy(&cycles, device_cycles, sizeof(cycles), cudaMemcpyDeviceToHost));
-        if (!cycles) fail("elapsed cycles must be positive");
-        std::printf("%s,%lld,%d,%d,%d,%d,%lld,%lld,%llu,%.6f,%.6f,OK\n", kMethodName,
+        LoopTiming timing{};
+        CUDA_CHECK_FATAL(cudaMemcpy(&timing, device_cycles, sizeof(timing), cudaMemcpyDeviceToHost));
+        const auto cycles = timing.cycles;
+        if (!cycles || !timing.elapsed_ns || timing.timer_bracket_ns >= timing.elapsed_ns / 100)
+            fail("invalid loop timing, or timer bracket exceeds 1%% of the interval");
+        std::printf("%s,%lld,%d,%d,%d,%d,%lld,%lld,%llu,%.6f,%.6f,OK,"
+                    "%llu,%llu,%u,%.6f,%.6f\n", kMethodName,
                     static_cast<long long>(sample), group, m, spec.n, spec.depth,
                     static_cast<long long>(config.iterations), static_cast<long long>(total_flops),
-                    cycles, static_cast<double>(cycles) / total_umma,
-                    static_cast<double>(total_flops) / cycles);
+                    static_cast<unsigned long long>(cycles), static_cast<double>(cycles) / total_umma,
+                    static_cast<double>(total_flops) / cycles,
+                    static_cast<unsigned long long>(timing.elapsed_ns),
+                    static_cast<unsigned long long>(timing.timer_bracket_ns), timing.smid,
+                    1000.0 * cycles / timing.elapsed_ns,
+                    static_cast<double>(total_flops) / timing.elapsed_ns / 1000.0);
     }
     CUDA_CHECK_FATAL(cudaFree(output));
     CUDA_CHECK_FATAL(cudaFree(device_cycles));

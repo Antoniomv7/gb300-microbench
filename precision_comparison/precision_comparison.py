@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Experiment V: BF16, FP8 and NVFP4 CuTe DSL GEMMs, compared with cuBLASLt on the same operands.
 
-For every shape and format, three CuTe DSL repetitions run unchanged through the pinned CUTLASS
-example's run(); cublaslt_precision.py then validates and times cuBLASLt on the operand bytes that
+For every shape and format, three CuTe DSL repetitions use the pinned CUTLASS example's run()
+with timing/stream adapters; cublaslt_precision.py then validates cuBLASLt on the operand bytes that
 each repetition consumed. This script writes the raw records and refuses an incomplete or
 mismatched run; analysis/analyze.py computes the two published summaries from the records.
 """
 
 import argparse
+import contextlib
 import csv
 import importlib.util
 import json
@@ -19,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts import metadata  # noqa: E402
+from scripts.benchmark_timing import PairedTimer, example_current_stream  # noqa: E402
 
 EXAMPLES = Path("/opt/cutlass/examples/python/CuTeDSL/cute/blackwell/kernel")
 SHAPES = ((4096, 4096, 4096, 1), (8192, 8192, 8192, 1),
@@ -32,7 +34,8 @@ TILE = (256, 128)
 CLUSTER = (2, 1)
 REPETITION_FIELDS = ("shape_index", "shape_id", "m", "n", "k", "l", "precision",
                      "implementation", "repetition", "operand_set", "kernel_time_us", "tflops",
-                     "validation", "bit_exact")
+                     "validation", "bit_exact", "timing_method", "host_event_time_us",
+                     "host_to_graph_time_ratio", "timing_order")
 VALIDATION_FIELDS = ("shape_index", "shape_id", "m", "n", "k", "l", "precision", "operand_set",
                      "implementation", "stage", "reference", "status", "atol", "rtol", "finite",
                      "mismatches", "max_abs_error", "bit_exact",
@@ -76,7 +79,7 @@ def measure(module, cutlass, precision, shape, warmup, iterations, verify):
     return microseconds
 
 
-def run(cublaslt):
+def run(cublaslt, timer):
     """Three CuTe DSL repetitions per shape and format, then cuBLASLt on their operand sets."""
     import cutlass
     import torch
@@ -88,20 +91,25 @@ def run(cublaslt):
         for precision in FORMATS:
             torch.manual_seed(1111)
             module = blockscaled if precision == "nvfp4" else dense
-            samples, captures = [], []
+            samples, captures, timings = [], [], []
             for repetition in range(REPETITIONS):
                 print(f"precision: {'x'.join(map(str, shape))}/{precision} "
                       f"repetition {repetition + 1}/{REPETITIONS}",
                       file=sys.stderr, flush=True)
                 # The hooks only record the operands run() creates.
-                with cublaslt.capture(module, precision) as captured:
+                timer.reverse = repetition % 2 == 1
+                stream_scope = (example_current_stream() if precision == "nvfp4"
+                                else contextlib.nullcontext())
+                with cublaslt.capture(module, precision) as captured, \
+                        timer.intercept(), stream_scope:
                     # Validate each format and shape once before timing its repetitions.
                     samples.append(measure(module, cutlass, precision, shape, WARMUP_ITERATIONS,
                                            ITERATIONS, verify=repetition == 0))
+                timings.append(dict(timer.last))
                 captures.append(captured)
             print(f"precision: {'x'.join(map(str, shape))}/{precision} cuBLASLt on the "
                   "same operand sets", file=sys.stderr, flush=True)
-            cublaslt.measure(shape_index, shape, precision, cutlass, captures, samples)
+            cublaslt.measure(shape_index, shape, precision, cutlass, captures, samples, timings)
             del captures
 
 
@@ -139,10 +147,18 @@ def check_records(repetitions, validation, operands, plans):
                  {(*key, name) for key in configurations for name in sets}, "operands")
     require_keys(plans, (), configurations, "cuBLASLt plans")
     for record in repetitions:
+        if record.get("timing_method") != "cuda_graph":
+            problems.append("a precision repetition did not use the graph timing protocol")
+        if any(not math.isfinite(float(record[name])) or float(record[name]) <= 0
+               for name in ("host_event_time_us", "host_to_graph_time_ratio")):
+            problems.append("invalid paired host timing")
         if record["validation"] != "PASS" or any(
                 not math.isfinite(record[field]) or record[field] <= 0
                 for field in ("kernel_time_us", "tflops")):
             problems.append("a timed repetition failed validation or has an invalid measurement")
+        if not math.isclose(float(record["host_to_graph_time_ratio"]),
+                            float(record["host_event_time_us"])/record["kernel_time_us"], rel_tol=1e-7):
+            problems.append("a paired host/graph timing ratio is inconsistent")
     for record in validation:
         if record["status"] != "PASS":
             problems.append(f"{record['shape_id']}/{record['precision']}/{record['operand_set']}: "
@@ -166,19 +182,28 @@ def check_records(repetitions, validation, operands, plans):
 
 
 def main():
+    global SHAPES, REPETITIONS
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output", type=Path, required=True,
                         help="new run directory; an existing directory is never reused")
+    parser.add_argument("--pilot", action="store_true")
     args = parser.parse_args()
+    if args.pilot:
+        SHAPES, REPETITIONS = SHAPES[:1], 1
     output = args.output if args.output.is_absolute() else ROOT / args.output
     output.mkdir(parents=True, exist_ok=False)
     # A sibling of this script; analysis/analyze.py imports this file only for its constants.
     import cublaslt_precision
 
-    record = {"experiment": "precision_comparison", "created_utc": metadata.utc_now(),
+    record = {"experiment": "precision_comparison", "pilot": args.pilot,
+              "created_utc": metadata.utc_now(),
               **metadata.environment()}
-    cublaslt = cublaslt_precision.Baseline(WARMUP_ITERATIONS, ITERATIONS)
-    run(cublaslt)
+    import torch
+    timer = PairedTimer()
+    cublaslt = cublaslt_precision.Baseline(WARMUP_ITERATIONS, ITERATIONS, timer)
+    stream = torch.cuda.Stream()
+    with torch.cuda.stream(stream):
+        run(cublaslt, timer)
     # Kernel names come from a profiler, so they are read only after every timed launch.
     cublaslt.identify_kernels()
     for plan in cublaslt.plans:
@@ -199,7 +224,10 @@ def main():
         "parameters": {
             "shapes": ["x".join(map(str, shape)) for shape in SHAPES], "formats": list(FORMATS),
             "repetitions": REPETITIONS, "warmup_iterations": WARMUP_ITERATIONS,
-            "iterations": ITERATIONS, "mma_tile": "x".join(map(str, TILE)),
+            "iterations": ITERATIONS, "timing_method": "cuda_graph",
+            "host_diagnostic": "same workspace, own warm-up; alternating order",
+            "example_stream_policy": "NVFP4 default_stream helper scoped to current non-default stream",
+            "mma_tile": "x".join(map(str, TILE)),
             "cluster_shape": "x".join(map(str, CLUSTER)),
             "tolerances": {precision: {"atol": atol, "rtol": rtol} for precision, (atol, rtol)
                            in cublaslt_precision.TOLERANCES.items()},

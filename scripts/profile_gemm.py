@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Profile one BF16 GEMM launch per shape for persistent_2cta and cuBLASLt with Nsight Compute.
+"""Profile both persistent 2-CTA BF16 tiles and cuBLASLt with Nsight Compute.
 
 Each capture runs in its own process under ncu. That worker reuses the operand generation,
 layouts, validation, kernel preparation and warm-up of gemm_comparison/gemm_comparison.py and
 wraps exactly one further launch in the only NVTX range the Nsight Compute filter admits.
-Profiler durations are diagnostics; the CUDA-event results of Experiment IV remain the
+Profiler durations are diagnostics; the graph-replay results of Experiment IV remain the
 performance data. analysis/analyze.py turns the exported counters into gemm_profile.csv.
 """
 
@@ -27,7 +27,7 @@ from scripts import metadata, run_campaign  # noqa: E402
 from scripts.ncu_capture import benchmark_command, export_csv, ncu, parse_kernels  # noqa: E402
 
 SHAPES = ((4096, 4096, 4096, 1), (8192, 8192, 8192, 1), (32768, 512, 4096, 1))
-VARIANTS = ("persistent_2cta", "heuristic_first_supported")
+VARIANTS = ("persistent_2cta", "persistent_2cta_256x256", "heuristic_first_supported")
 CAMPAIGN_WARMUP = run_campaign.GEMM["warmup_iterations"]
 NVTX_RANGE = "gb300_gemm_profile"
 DRAM_METRICS = ("dram__bytes_read.sum", "dram__bytes_write.sum")
@@ -54,7 +54,7 @@ def shape_id(shape):
     return "x".join(map(str, shape))
 
 
-# Capture order and file stems: both implementations of each shape.
+# Capture order and file stems: both P2 tiles and cuBLASLt for each shape.
 CASES = [(f"{index:02d}_{shape_id(shape[:3])}_{variant}", shape, variant)
          for index, (shape, variant) in enumerate(
              (shape, variant) for shape in SHAPES for variant in VARIANTS)]
@@ -204,11 +204,11 @@ def capture(directory, case, shape, variant, metrics, ncu_settings):
     return record
 
 
-def profile(output, cache_state):
+def profile(output, cache_state, pilot=False):
     ncu_settings = NCU_SETTINGS[cache_state]
     directory = output if output.is_absolute() else ROOT / output
     directory.mkdir(parents=True, exist_ok=False)
-    record = {"cache_state": cache_state, "created_utc": metadata.utc_now(),
+    record = {"cache_state": cache_state, "pilot": pilot, "created_utc": metadata.utc_now(),
               **metadata.environment(),
               "ncu_settings": {flag.lstrip("-"): value for flag, value in ncu_settings},
               "nvtx_range": NVTX_RANGE, "warmup_launches": CAMPAIGN_WARMUP}
@@ -219,15 +219,18 @@ def profile(output, cache_state):
     metrics = (*DRAM_METRICS, *TIMING_METRICS,
                *((L2_READ_METRIC,) if calibration["collected"] else ()))
 
+    if not calibration["collected"]:
+        raise RuntimeError("the tile-traffic study requires a supported, calibrated TMA counter")
+    cases = [case for case in CASES if not pilot or case[1] == SHAPES[0]]
     operands = defaultdict(set)
-    for case, shape, variant in CASES:
+    for case, shape, variant in cases:
         worker_record = capture(directory, case, shape, variant, metrics, ncu_settings)
         operands[shape].add(json.dumps(worker_record["operands_sha256"], sort_keys=True))
     if any(len(digests) != 1 for digests in operands.values()):
-        raise RuntimeError("the two implementations of a shape were profiled on different operands")
+        raise RuntimeError("the implementations of a shape were profiled on different operands")
 
     record.update({"metrics": list(metrics), "l2_read_metric": calibration,
-                   "captures": [case for case, _, _ in CASES]})
+                   "captures": [case for case, _, _ in cases]})
     metadata.complete(record)
     (directory / "metadata.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(f"profile: complete {directory}", file=sys.stderr)
@@ -243,11 +246,12 @@ def main():
     parser.add_argument("--shape", type=parse_shape, help=argparse.SUPPRESS)
     parser.add_argument("--variant", choices=VARIANTS, help=argparse.SUPPRESS)
     parser.add_argument("--result", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--pilot", action="store_true")
     args = parser.parse_args()
     if args.worker:
         worker(args.shape, args.variant, args.result)
     elif args.output and args.cache_state:
-        profile(args.output, args.cache_state)
+        profile(args.output, args.cache_state, args.pilot)
     else:
         parser.error("--output and --cache-state are required")
 

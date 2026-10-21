@@ -14,7 +14,7 @@ constexpr int kM1sm = 128;
 constexpr int kM2sm = 256;
 constexpr unsigned long long kResidencyTimeoutCycles = 2000000000ULL;
 
-enum class RunMode : int32_t { kCompute = 0, kResidency = 1 };
+enum class RunMode : int32_t { kCompute = 0, kResidency = 1, kControl = 2 };
 
 double host_unix_seconds() {
     // CLOCK_REALTIME matches the nvidia-smi sample timestamps used for telemetry.
@@ -52,7 +52,8 @@ void umma_1sm_scaling_m128n256k16_d256(int64_t iterations, RunMode mode,
                                         float* __restrict__ output,
                                         unsigned int* __restrict__ arrivals,
                                         int* __restrict__ resident,
-                                        int* __restrict__ smids) {
+                                        int* __restrict__ smids,
+                                        LoopTiming* __restrict__ loop_timings) {
     const int tid = threadIdx.x;
     const int block = static_cast<int>(blockIdx.x);
     if (mode == RunMode::kResidency) {
@@ -102,6 +103,8 @@ void umma_1sm_scaling_m128n256k16_d256(int64_t iterations, RunMode mode,
     if (leader) {
         const uint32_t address = static_cast<uint32_t>(__cvta_generic_to_shared(&barrier));
         uint32_t parity = 0;
+        ClockStamp begin{};
+        if (mode == RunMode::kCompute) begin = clock_stamp();
         for (int64_t iteration = 0; iteration < iterations; ++iteration) {
             issue_one_umma_1sm(tmem, a_descriptor, b_descriptor, descriptor, 0);
 #pragma unroll
@@ -111,6 +114,8 @@ void umma_1sm_scaling_m128n256k16_d256(int64_t iterations, RunMode mode,
             while (!cuda::ptx::mbarrier_try_wait_parity(&barrier, parity)) {}
             parity ^= 1u;
         }
+        if (mode == RunMode::kCompute)
+            save_loop_timing(loop_timings + block, begin, clock_stamp());
     }
 
     __syncthreads();
@@ -142,7 +147,8 @@ void umma_2sm_scaling_m256n256k16_d256(int64_t iterations, RunMode mode,
                                         float* __restrict__ output,
                                         unsigned int* __restrict__ arrivals,
                                         int* __restrict__ resident,
-                                        int* __restrict__ smids) {
+                                        int* __restrict__ smids,
+                                        LoopTiming* __restrict__ loop_timings) {
     const int tid = threadIdx.x;
     const int block = static_cast<int>(blockIdx.x);
     if (mode == RunMode::kResidency) {
@@ -198,6 +204,8 @@ void umma_2sm_scaling_m256n256k16_d256(int64_t iterations, RunMode mode,
     const uint64_t b_descriptor = make_smem_descriptor(B);
     constexpr uint32_t descriptor = make_umma_descriptor<kM2sm, kN>();
     const uint32_t address = static_cast<uint32_t>(__cvta_generic_to_shared(&barrier));
+    ClockStamp begin{};
+    if (leader && mode == RunMode::kCompute) begin = clock_stamp();
     uint32_t parity = 0;
     for (int64_t iteration = 0; iteration < iterations; ++iteration) {
         if (leader) {
@@ -215,6 +223,9 @@ void umma_2sm_scaling_m256n256k16_d256(int64_t iterations, RunMode mode,
         cuda::ptx::barrier_cluster_arrive();
         cuda::ptx::barrier_cluster_wait();
     }
+
+    if (leader && mode == RunMode::kCompute)
+        save_loop_timing(loop_timings + block, begin, clock_stamp());
 
     __syncthreads();
     tcgen05_fence_after_thread_sync();
@@ -245,7 +256,7 @@ void umma_2sm_scaling_m256n256k16_d256(int64_t iterations, RunMode mode,
 
 namespace {
 
-using ScalingKernel = void (*)(int64_t, RunMode, float*, unsigned int*, int*, int*);
+using ScalingKernel = void (*)(int64_t, RunMode, float*, unsigned int*, int*, int*, LoopTiming*);
 
 struct Plan {
     const char* method;
@@ -261,11 +272,12 @@ struct Plan {
     unsigned int* arrivals = nullptr;
     int* resident = nullptr;
     int* smids = nullptr;
+    LoopTiming* loop_timings = nullptr;
 };
 
 void launch(const Plan& plan, int64_t iterations, RunMode mode, size_t reservation) {
     plan.kernel<<<plan.blocks, kThreadsPerCta, reservation>>>(
-        iterations, mode, plan.output, plan.arrivals, plan.resident, plan.smids);
+        iterations, mode, plan.output, plan.arrivals, plan.resident, plan.smids, plan.loop_timings);
     CUDA_CHECK_FATAL(cudaGetLastError());
 }
 
@@ -278,6 +290,7 @@ void initialize(Plan& plan, int64_t iterations) {
     CUDA_CHECK_FATAL(cudaMalloc(&plan.arrivals, sizeof(unsigned int)));
     CUDA_CHECK_FATAL(cudaMalloc(&plan.resident, static_cast<size_t>(plan.blocks) * sizeof(int)));
     CUDA_CHECK_FATAL(cudaMalloc(&plan.smids, static_cast<size_t>(plan.blocks) * sizeof(int)));
+    CUDA_CHECK_FATAL(cudaMalloc(&plan.loop_timings, static_cast<size_t>(plan.blocks) * sizeof(LoopTiming)));
 }
 
 void probe_residency(Plan& plan, size_t reservation) {
@@ -364,15 +377,101 @@ void verify_occupancy(ScalingKernel kernel, size_t reservation) {
 }
 
 void print_row(const Plan& plan, int hardware_sms, int64_t sample, int64_t iterations,
-               float milliseconds, double host_start, double host_end) {
+               float milliseconds, double host_start, double host_end,
+               bool instrumented, std::FILE* loop_file) {
     const double throughput = plan.total_flops / static_cast<double>(milliseconds) / 1e9;
     const int clusters = plan.group == 2 ? plan.work_units : 0;
+    double median_clock = 0, min_clock = 0, max_clock = 0, mean_work_cycle_sm = 0;
+    uint64_t first = UINT64_MAX, last = 0;
+    if (instrumented) {
+        std::vector<LoopTiming> samples(static_cast<size_t>(plan.blocks));
+        CUDA_CHECK_FATAL(cudaMemcpy(samples.data(), plan.loop_timings,
+                                    samples.size() * sizeof(LoopTiming), cudaMemcpyDeviceToHost));
+        std::vector<double> clocks;
+        std::vector<uint32_t> ids;
+        const double work_per_sm = static_cast<double>(plan.total_flops) / plan.blocks;
+        for (int block = 0; block < plan.blocks; ++block) {
+            const auto& t = samples[block];
+            if (!t.cycles || !t.elapsed_ns || t.end_ns <= t.start_ns ||
+                t.timer_bracket_ns >= t.elapsed_ns / 100)
+                fail("%s/%s: invalid loop timer or bracket above 1%%", plan.method, plan.scale);
+            const double mhz = 1000.0 * t.cycles / t.elapsed_ns;
+            clocks.push_back(mhz);
+            ids.push_back(t.smid);
+            mean_work_cycle_sm += work_per_sm / t.cycles / plan.blocks;
+            first = std::min(first, t.start_ns);
+            last = std::max(last, t.end_ns);
+            if (loop_file)
+                std::fprintf(loop_file, "%s,%s,%lld,%d,%u,%llu,%llu,%llu,%llu,%llu,%.9f,%.9f\n",
+                    plan.method, plan.scale, static_cast<long long>(sample), block, t.smid,
+                    static_cast<unsigned long long>(t.cycles),
+                    static_cast<unsigned long long>(t.elapsed_ns),
+                    static_cast<unsigned long long>(t.timer_bracket_ns),
+                    static_cast<unsigned long long>(t.start_ns),
+                    static_cast<unsigned long long>(t.end_ns), mhz, work_per_sm / t.cycles);
+        }
+        std::sort(ids.begin(), ids.end());
+        if (std::unique(ids.begin(), ids.end()) - ids.begin() != plan.blocks)
+            fail("timed launch did not observe a distinct SM for every CTA");
+        std::sort(clocks.begin(), clocks.end());
+        median_clock = (clocks[(clocks.size()-1)/2] + clocks[clocks.size()/2]) / 2;
+        min_clock = clocks.front(); max_clock = clocks.back();
+    }
+    const uint64_t span = instrumented ? last - first : 0;
     std::printf("%s,%s,%lld,%d,%lld,%d,%d,%d,%d,%d,"
-                "all_blocks_simultaneously_resident,%.6f,%.6f,%.6f,%.6f,%.6f,OK\n",
+                "all_blocks_simultaneously_resident,%.9f,%.9f,%.9f,%.9f,%.9f,OK,"
+                "%d,%.9f,%.9f,%.9f,%.9f,%llu,%.9f\n",
                 plan.method, plan.scale, static_cast<long long>(sample), plan.group,
                 static_cast<long long>(iterations), plan.work_units, clusters, hardware_sms,
                 plan.blocks, plan.observed_sms, static_cast<double>(milliseconds),
-                throughput, throughput / plan.blocks, host_start, host_end);
+                throughput, throughput / plan.blocks, host_start, host_end,
+                instrumented ? 1 : 0, median_clock, min_clock, max_clock, mean_work_cycle_sm,
+                static_cast<unsigned long long>(span),
+                span ? static_cast<double>(plan.total_flops) / span / 1000.0 : 0.0);
+}
+
+double monotonic_seconds() {
+    timespec now{};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return static_cast<double>(now.tv_sec) + static_cast<double>(now.tv_nsec) * 1e-9;
+}
+
+void sustained(const Plan& plan, const CliConfig& config, size_t reservation,
+               const std::vector<float>& reference) {
+    // Warm-up and measurement use the same validated work. No output copies,
+    // numerical checks or profiler calls take place inside the power window.
+    const double warmup_start = monotonic_seconds();
+    do {
+        launch(plan, config.iterations, RunMode::kControl, reservation);
+        CUDA_CHECK_FATAL(cudaDeviceSynchronize());
+    } while (monotonic_seconds() - warmup_start < config.warmup_ms / 1000.0);
+    cudaEvent_t begin, end;
+    CUDA_CHECK_FATAL(cudaEventCreate(&begin));
+    CUDA_CHECK_FATAL(cudaEventCreate(&end));
+    const double host_start = host_unix_seconds(), start = monotonic_seconds();
+    int64_t count = 0;
+    double device_ms = 0;
+    do {
+        CUDA_CHECK_FATAL(cudaEventRecord(begin));
+        launch(plan, config.iterations, RunMode::kControl, reservation);
+        CUDA_CHECK_FATAL(cudaEventRecord(end));
+        CUDA_CHECK_FATAL(cudaEventSynchronize(end));
+        float ms = 0;
+        CUDA_CHECK_FATAL(cudaEventElapsedTime(&ms, begin, end));
+        device_ms += ms;
+        ++count;
+    } while (monotonic_seconds() - start < config.duration_ms / 1000.0);
+    const double seconds = monotonic_seconds() - start, host_end = host_unix_seconds();
+    validate(plan, config.iterations, reservation, reference);
+    std::puts("method,scale,host_start_unix_s,host_end_unix_s,elapsed_s,launch_count,"
+              "device_elapsed_ms,gpu_duty_fraction,total_flops,active_sm_count,iterations,correctness");
+    std::printf("%s,%s,%.9f,%.9f,%.9f,%lld,%.9f,%.9f,%.0f,%d,%lld,OK\n",
+                plan.method, plan.scale, host_start, host_end, seconds,
+                static_cast<long long>(count), device_ms, device_ms / (seconds * 1000.0),
+                static_cast<double>(plan.total_flops) * count, plan.blocks,
+                static_cast<long long>(config.iterations));
+    CUDA_CHECK_FATAL(cudaEventDestroy(begin));
+    CUDA_CHECK_FATAL(cudaEventDestroy(end));
 }
 
 void release(Plan& plan) {
@@ -380,6 +479,7 @@ void release(Plan& plan) {
     CUDA_CHECK_FATAL(cudaFree(plan.arrivals));
     CUDA_CHECK_FATAL(cudaFree(plan.resident));
     CUDA_CHECK_FATAL(cudaFree(plan.smids));
+    CUDA_CHECK_FATAL(cudaFree(plan.loop_timings));
 }
 
 }  // namespace
@@ -418,6 +518,14 @@ int main(int argc, char** argv) {
         {"umma_2sm", "device_scale", kM2sm, 2, sms, sms / 2, 0, 0,
          &umma_2sm_scaling_m256n256k16_d256},
     };
+    plans.erase(std::remove_if(plans.begin(), plans.end(), [&](const Plan& plan) {
+        return (!config.only_method.empty() && config.only_method != plan.method) ||
+               (!config.only_scale.empty() && config.only_scale != plan.scale);
+    }), plans.end());
+    if (config.reverse_order) std::reverse(plans.begin(), plans.end());
+    if (config.run_kind == "sustained" &&
+        (plans.size() != 1 || config.only_scale != "device_scale"))
+        fail("sustained mode requires --only-method and --only-scale device_scale");
     const std::vector<float> reference = build_reference();
     for (Plan& plan : plans) {
         initialize(plan, config.iterations);
@@ -425,13 +533,28 @@ int main(int argc, char** argv) {
         validate(plan, config.iterations, reservation, reference);
     }
 
+    if (config.run_kind == "sustained") {
+        sustained(plans.front(), config, reservation, reference);
+        for (Plan& plan : plans) release(plan);
+        return 0;
+    }
+    std::FILE* loop_file = nullptr;
+    if (!config.loop_output.empty()) {
+        loop_file = std::fopen(config.loop_output.c_str(), "wx");
+        if (!loop_file) fail("cannot create loop-output file");
+        std::fputs("method,scale,sample_index,block,smid,elapsed_cycles,loop_elapsed_ns,"
+                   "timer_bracket_ns,start_ns,end_ns,effective_sm_clock_mhz,flops_per_cycle_sm\n", loop_file);
+    }
+    const RunMode timing_mode = config.instrument_loops ? RunMode::kCompute : RunMode::kControl;
     cudaEvent_t started = nullptr, stopped = nullptr;
     CUDA_CHECK_FATAL(cudaEventCreate(&started));
     CUDA_CHECK_FATAL(cudaEventCreate(&stopped));
     std::puts("method,scale,sample_index,cta_group,iterations,work_unit_count,cluster_count,"
               "hardware_sm_count,planned_active_sm_count,observed_unique_sm_count,"
               "residency_evidence,kernel_time_ms,total_tflops,tflops_per_planned_active_sm,"
-              "host_start_unix_s,host_end_unix_s,correctness");
+              "host_start_unix_s,host_end_unix_s,correctness,instrumented,"
+              "median_effective_sm_clock_mhz,min_effective_sm_clock_mhz,max_effective_sm_clock_mhz,"
+              "mean_loop_flops_per_cycle_sm,loop_device_span_ns,loop_total_tflops");
     // Each configuration warms up and is then timed as one contiguous campaign, so an
     // external clock sampler can attribute its samples to a single configuration.
     for (Plan& plan : plans) {
@@ -442,17 +565,19 @@ int main(int argc, char** argv) {
         for (int64_t sample = 0; sample < config.repetitions; ++sample) {
             const double host_start = host_unix_seconds();
             CUDA_CHECK_FATAL(cudaEventRecord(started));
-            launch(plan, config.iterations, RunMode::kCompute, reservation);
+            launch(plan, config.iterations, timing_mode, reservation);
             CUDA_CHECK_FATAL(cudaEventRecord(stopped));
             CUDA_CHECK_FATAL(cudaEventSynchronize(stopped));
             const double host_end = host_unix_seconds();
             float milliseconds = 0;
             CUDA_CHECK_FATAL(cudaEventElapsedTime(&milliseconds, started, stopped));
             if (!(milliseconds > 0)) fail("kernel duration must be positive");
-            print_row(plan, sms, sample, config.iterations, milliseconds, host_start, host_end);
+            print_row(plan, sms, sample, config.iterations, milliseconds, host_start, host_end,
+                      config.instrument_loops, loop_file);
         }
     }
 
+    if (loop_file && std::fclose(loop_file) != 0) fail("cannot flush loop-output file");
     for (Plan& plan : plans) release(plan);
     CUDA_CHECK_FATAL(cudaEventDestroy(started));
     CUDA_CHECK_FATAL(cudaEventDestroy(stopped));
