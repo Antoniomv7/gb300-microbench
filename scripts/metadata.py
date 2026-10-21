@@ -4,12 +4,16 @@
 import csv
 import datetime as dt
 import importlib.metadata
+import hashlib
+import json
 import os
 import platform
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+PROTOCOL_VERSION = 2
+
 GPU_FIELDS = ("uuid", "name", "driver_version", "pci.bus_id", "vbios_version",
               "clocks.max.sm", "clocks.max.memory", "power.limit", "ecc.mode.current")
 PACKAGES = ("torch", "nvidia-cutlass-dsl", "cuda-python", "cuda-bindings", "nvidia-cublas")
@@ -55,8 +59,8 @@ def environment():
             packages[package] = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError:
             packages[package] = None
-    return {
-        "git_commit": commit, "git_dirty": False,
+    record = {
+        "git_commit": commit, "git_dirty": False, "protocol_version": PROTOCOL_VERSION,
         "gpu": {field.replace(".", "_"): value.strip() for field, value in zip(GPU_FIELDS, values)},
         "cuda_toolkit": line_containing(output("nvcc", "--version"), "release"),
         "nsight_compute": line_containing(output("ncu", "--version"), "Version"),
@@ -65,3 +69,10 @@ def environment():
         "python": platform.python_version(),
         "packages": packages,
     }
+    # Do not compare transient temperatures/clocks, but require the same driver,
+    # configured power limit, ECC state and software stack across the final study.
+    stable = {key: record[key] for key in ("gpu", "cuda_toolkit", "nsight_compute",
+                                         "cutlass_commit", "python", "packages")}
+    record["environment_fingerprint"] = hashlib.sha256(
+        json.dumps(stable, sort_keys=True).encode()).hexdigest()
+    return record

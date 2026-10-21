@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """cuBLASLt baselines measured on the CuTe DSL precision runs' own logical operands.
 
-Each CuTe DSL repetition still runs unchanged through the pinned example's run(). Observation
+Each CuTe DSL repetition uses the pinned example's run() with a shared timing adapter. Observation
 hooks record the logical operands that run() draws, the bytes it hands to the kernel and the
 kernel's output. The cuBLASLt baseline re-encodes the same logical operands in the formats and
 scale layout that cuBLASLt documents, validates against a reference formed from its own decoded
-bytes, and is timed by the same cute.testing.benchmark call as the CuTe DSL kernels.
+bytes, and uses the same paired graph/host-event timing policy as the CuTe DSL kernels.
 """
 
 import contextlib
@@ -354,13 +354,13 @@ def blockscaled_sets(torch, cutlass, shape, capture):
 class Baseline:
     """Measure cuBLASLt on the operand sets captured from each CuTe DSL configuration."""
 
-    def __init__(self, warmup, iterations):
+    def __init__(self, warmup, iterations, timer):
         import torch
         from cuda.bindings import driver
 
         check_validator(torch)
         self.torch, self.driver = torch, driver
-        self.warmup, self.iterations = warmup, iterations
+        self.warmup, self.iterations, self.timer = warmup, iterations, timer
         self.bridge = Bridge()
         self.repetitions, self.validation, self.operands, self.plans = [], [], [], []
 
@@ -383,7 +383,7 @@ class Baseline:
         self.validation.append(record)
         return record
 
-    def measure(self, shape_index, shape, precision, cutlass, captures, cute_samples):
+    def measure(self, shape_index, shape, precision, cutlass, captures, cute_samples, cute_timings):
         """Validate and time cuBLASLt on the CuTe DSL run's own logical operand sets."""
         torch = self.torch
         m, n, k, batch = shape
@@ -417,7 +417,8 @@ class Baseline:
                     **context, "implementation": "cutedsl", "repetition": repetition,
                     "operand_set": name, "kernel_time_us": cute_samples[repetition - 1],
                     "tflops": flops / cute_samples[repetition - 1] / 1e6,
-                    "validation": cute["status"], "bit_exact": cute["bit_exact"]})
+                    "validation": cute["status"], "bit_exact": cute["bit_exact"],
+                    **cute_timings[repetition - 1]})
             output = torch.full((m, n), float("nan"), dtype=torch.float32, device="cuda")
             plan = self.bridge.plan(precision, encoded, output, stream.cuda_stream)
             try:
@@ -430,6 +431,7 @@ class Baseline:
                     raise RuntimeError(f"{context['shape_id']}/{precision}/{name}: the cuBLASLt "
                                        f"result failed validation")
                 if repetition:
+                    self.timer.reverse = repetition % 2 == 0
                     duration = self.time(plan)
                     after = self.check(context, name, "cublaslt", "after_timing", output,
                                        expected, REFERENCE)
@@ -437,7 +439,8 @@ class Baseline:
                         **context, "implementation": "cublaslt", "repetition": repetition,
                         "operand_set": name, "kernel_time_us": duration,
                         "tflops": flops / duration / 1e6, "validation": after["status"],
-                        "bit_exact": before["bit_exact"] and after["bit_exact"]})
+                        "bit_exact": before["bit_exact"] and after["bit_exact"],
+                        **self.timer.last})
                 self.operands[-1]["outputs_bit_identical"] = bool(
                     torch.equal(output, operands["cute"]["output"]))
             finally:
@@ -450,11 +453,11 @@ class Baseline:
         torch.cuda.synchronize()
 
     def time(self, plan):
-        """Time exactly like the CuTe DSL examples: cute.testing.benchmark on the default stream."""
+        """Apply the same graph/host pair and explicit stream as the CuTe DSL examples."""
         from cutlass.cute import testing
 
         stream = self.driver.CUstream(self.torch.cuda.current_stream().cuda_stream)
-        microseconds = float(testing.benchmark(
+        microseconds = float(self.timer.benchmark(
             plan, kernel_arguments=testing.JitArguments(), stream=stream,
             warmup_iterations=self.warmup, iterations=self.iterations))
         if not math.isfinite(microseconds) or microseconds <= 0:

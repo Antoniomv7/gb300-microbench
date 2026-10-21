@@ -9,7 +9,7 @@ from scripts.run_campaign import MEMORY_METHODS, UMMA_METHODS
 COLORS = {"ldgsts": "#2563eb", "tma": "#d97706",
           "umma_1sm": "#2563eb", "umma_2sm": "#d97706"}
 GEMM_COLORS = {"nonpersistent_1cta": "#2563eb", "persistent_1cta": "#7c3aed",
-               "persistent_2cta": "#d97706", "heuristic_first_supported": "#15803d"}
+               "persistent_2cta": "#d97706", "persistent_2cta_256x256": "#be123c", "heuristic_first_supported": "#15803d"}
 SCALE_COLORS = {("umma_1sm", "isolated"): "#93c5fd", ("umma_1sm", "device_scale"): "#2563eb",
                 ("umma_2sm", "isolated"): "#fcd34d", ("umma_2sm", "device_scale"): "#d97706"}
 SCALE_LABELS = {("umma_1sm", "isolated"): "1-SM iso", ("umma_1sm", "device_scale"): "1-SM dev",
@@ -127,9 +127,10 @@ def gemm_figure(summary):
         output.append(svg_text(left - 9, yy + 4, f"{value:,.0f}", text_anchor="end",
                                font_size="10", fill="#64748b"))
     labels = {"nonpersistent_1cta": "NP1", "persistent_1cta": "P1",
-              "persistent_2cta": "P2", "heuristic_first_supported": "cuBLASLt"}
+              "persistent_2cta": "P2 256x128", "persistent_2cta_256x256": "P2 256x256",
+              "heuristic_first_supported": "cuBLASLt"}
     for index, variant in enumerate(variants):
-        xx = 535 + index * 158
+        xx = 170 + index * 205
         output.append(f'<rect x="{xx}" y="83" width="12" height="12" fill="{GEMM_COLORS[variant]}"/>')
         output.append(svg_text(xx + 18, 94, labels[variant], font_size="11"))
     lookup = {(point["shape_index"], point["variant"]): point for point in points}
@@ -190,7 +191,7 @@ def scaling_panel(output, x0, width, title, bars, unit, reference=None, decimals
 
 def scaling_figure(summary):
     output = svg_start("BF16 UMMA: isolated work unit versus all usable SMs",
-                       "Independent throughput axes; SM clock sampled during the same timed campaigns.",
+                       "Independent throughput axes; Internal loop clocks; whiskers show the range of three campaign medians.",
                        width=1640, height=500)
     lookup = {(point["method"], point["scale"]): point for point in summary["configurations"]}
     efficiency = summary["scaling_efficiency"]
@@ -200,20 +201,16 @@ def scaling_figure(summary):
     scaling_panel(output, 482, 300, "Whole device",
                   [(SCALE_LABELS[(method, "device_scale")], SCALE_COLORS[(method, "device_scale")],
                     lookup[(method, "device_scale")]) for method in UMMA_METHODS], "Total TFLOP/s")
-    scaling_panel(output, 878, 300, "Mean SM clock in the same campaign",
+    scaling_panel(output, 878, 300, "Effective loop SM clock",
                   [(SCALE_LABELS[key], SCALE_COLORS[key], lookup[key]["clock"])
                    for key in SCALE_LABELS], "MHz", baseline=1000.0)
-    scaling_panel(output, 1274, 300, "Scaling efficiency",
-                  [(label, SCALE_COLORS[(method, scale)], efficiency[method][field])
-                   for method, label, scale, field in (
-                       ("umma_1sm", "1-SM raw", "device_scale", "raw"),
-                       ("umma_1sm", "1-SM freq", "isolated", "frequency_normalized"),
-                       ("umma_2sm", "2-SM raw", "device_scale", "raw"),
-                       ("umma_2sm", "2-SM freq", "isolated", "frequency_normalized"))],
-                  "Whole-device / (units x isolated)", reference=1.0, decimals=2)
+    scaling_panel(output, 1274, 300, "Measured scaling ratio",
+                  [(label, SCALE_COLORS[(method, "device_scale")], efficiency[method]["raw"])
+                   for method, label in (("umma_1sm", "1-SM"), ("umma_2sm", "2-SM"))],
+                  "Device / (units x isolated)", reference=1.0, decimals=2)
     output.append(svg_text(34, 470,
-                           "Separate CUDA-event timings; raw efficiency also carries the DVFS "
-                           "difference that the frequency-normalized bars divide out.",
+                           "Kernel timing and internal-loop timing are distinct intervals; "
+                           "no device-telemetry frequency correction is applied.",
                            font_size="11", fill="#64748b"))
     return "\n".join([*output, "</svg>"]) + "\n"
 
@@ -347,4 +344,17 @@ def precision_comparison_figure(rows, warmup, iterations):
                            "Ratio above each pair: CuTe DSL / cuBLASLt mean throughput. Each "
                            f"repetition times {iterations} hot-cache launches after {warmup} "
                            "warm-up launches.", font_size="11", fill="#64748b"))
+    return "\n".join([*output, "</svg>"]) + "\n"
+
+
+def power_figure(summary):
+    output = svg_start("Sustained UMMA operating power", "Three 30-second windows after 10-second warm-up; whiskers show their range.", width=1260, height=500)
+    configurations = summary["configurations"]
+    for x, title, field, unit in ((86, "GPU board power", "power", "W"),
+                                 (482, "Sustained useful throughput", "throughput", "TFLOP/s"),
+                                 (878, "Device clock telemetry", "clock", "MHz")):
+        bars = [("1-SM units" if r["method"] == "umma_1sm" else "2-SM units",
+                 SCALE_COLORS[(r["method"], "device_scale")], r[field]) for r in configurations]
+        scaling_panel(output, x, 300, title, bars, unit)
+    output.append(svg_text(34, 470, "Power averages are time-weighted; polling samples are not independent repetitions.", font_size="11"))
     return "\n".join([*output, "</svg>"]) + "\n"

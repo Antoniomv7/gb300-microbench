@@ -1,4 +1,5 @@
 // LDGSTS global-to-shared bandwidth.
+// Methodological reference: SemiAnalysisAI/microbench-blackwell; see docs/provenance.md.
 
 #define MEMORY_METHOD "ldgsts"
 #include "memory_common.cuh"
